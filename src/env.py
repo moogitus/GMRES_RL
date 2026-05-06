@@ -13,7 +13,7 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 
-class CompactDiscreteShapedAKSLRLEnv(gym.Env):
+class GMRESEnv(gym.Env):
     """
     Gym environment for controlling GMRES(m) restart values on a fixed linear system Ax=b.
 

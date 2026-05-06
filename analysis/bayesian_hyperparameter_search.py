@@ -23,8 +23,6 @@ Run (default sweeps every .tar.gz / .mtx / .mat in matrices/sweep_matrices/):
 Requires: optuna (`pip install optuna`).
 """
 
-from __future__ import annotations
-
 import argparse
 import gzip
 import io
@@ -32,6 +30,7 @@ import json
 import sys
 import tarfile
 import time
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -132,6 +131,26 @@ def discover_matrices(matrices_dir: Path) -> list[Path]:
 # Single-solve evaluation
 # --------------------------------------------------------------------------- #
 
+
+class _ProgressSlots:
+    """Simple slot allocator so concurrently running trials use stable tqdm rows."""
+
+    def __init__(self, n_slots: int, start_position: int = 1):
+        self._available = list(range(start_position, start_position + max(1, int(n_slots))))
+        self._cond = threading.Condition()
+
+    def acquire(self) -> int:
+        with self._cond:
+            while not self._available:
+                self._cond.wait()
+            return self._available.pop(0)
+
+    def release(self, position: int) -> None:
+        with self._cond:
+            self._available.append(position)
+            self._available.sort()
+            self._cond.notify()
+
 class _StopOnDone(BaseCallback):
     def __init__(self):
         super().__init__()
@@ -225,7 +244,7 @@ def run_score(run: dict, args) -> float:
 # Optuna objective: aggregate over the whole matrix set
 # --------------------------------------------------------------------------- #
 
-def make_objective(matrices, args):
+def make_objective(matrices, args, progress_slots: _ProgressSlots | None = None):
     """One trial = train+solve on every matrix; objective = mean run score."""
     def objective(trial: optuna.Trial) -> float:
         hp = {
@@ -238,49 +257,56 @@ def make_objective(matrices, args):
         running_scores: list[float] = []
         report_step = 0
 
+        position = progress_slots.acquire() if progress_slots is not None else 1
         pbar = tqdm(
-            matrices,
+            total=len(matrices) * args.n_seeds,
             desc=f"trial {trial.number:>3d}",
             leave=False,
-            position=1,
+            position=position,
             dynamic_ncols=True,
         )
-        for name, A, b in pbar:
-            seed_runs = []
-            seed_scores = []
-            for s in range(args.n_seeds):
-                seed = args.seed + s
-                run = evaluate_solve(A, b, hp, args, seed)
-                seed_runs.append(run)
-                seed_scores.append(run_score(run, args))
-            per_matrix[name] = {
-                "converged_rate": float(np.mean([r["converged"] for r in seed_runs])),
-                "total_arnoldi_mean": float(np.mean([r["total_arnoldi"] for r in seed_runs])),
-                "total_arnoldi_std":  float(np.std([r["total_arnoldi"] for r in seed_runs])),
-                "score_mean": float(np.mean(seed_scores)),
-                "elapsed_seconds_mean": float(np.mean([r["elapsed_seconds"] for r in seed_runs])),
-                "per_seed": seed_runs,
-            }
-            running_scores.extend(seed_scores)
-            pbar.set_postfix({
-                "matrix": name[:14],
-                "running_mean": f"{np.mean(running_scores):.0f}",
-                "conv": f"{int(np.mean([r['converged'] for r in seed_runs]) * args.n_seeds)}/{args.n_seeds}",
-            })
-            trial.report(float(np.mean(running_scores)), report_step)
-            report_step += 1
-            if trial.should_prune():
-                pbar.close()
-                trial.set_user_attr("per_matrix", per_matrix)
-                raise optuna.TrialPruned()
-        pbar.close()
+        try:
+            for matrix_idx, (name, A, b) in enumerate(matrices, start=1):
+                seed_runs = []
+                seed_scores = []
+                for s in range(args.n_seeds):
+                    seed = args.seed + s
+                    run = evaluate_solve(A, b, hp, args, seed)
+                    seed_runs.append(run)
+                    score = run_score(run, args)
+                    seed_scores.append(score)
+                    running_scores.append(score)
+                    pbar.update(1)
+                    pbar.set_postfix({
+                        "matrix": f"{matrix_idx}/{len(matrices)}:{name[:14]}",
+                        "seed": f"{s + 1}/{args.n_seeds}",
+                        "running_mean": f"{np.mean(running_scores):.0f}",
+                        "conv": f"{sum(1 for r in seed_runs if r['converged'])}/{len(seed_runs)}",
+                    })
+                    trial.report(float(np.mean(running_scores)), report_step)
+                    report_step += 1
+                    if trial.should_prune():
+                        trial.set_user_attr("per_matrix", per_matrix)
+                        raise optuna.TrialPruned()
+                per_matrix[name] = {
+                    "converged_rate": float(np.mean([r["converged"] for r in seed_runs])),
+                    "total_arnoldi_mean": float(np.mean([r["total_arnoldi"] for r in seed_runs])),
+                    "total_arnoldi_std":  float(np.std([r["total_arnoldi"] for r in seed_runs])),
+                    "score_mean": float(np.mean(seed_scores)),
+                    "elapsed_seconds_mean": float(np.mean([r["elapsed_seconds"] for r in seed_runs])),
+                    "per_seed": seed_runs,
+                }
 
-        trial.set_user_attr("per_matrix", per_matrix)
-        trial.set_user_attr("converged_matrix_count",
-                            int(sum(1 for v in per_matrix.values() if v["converged_rate"] >= 0.5)))
-        trial.set_user_attr("total_arnoldi_sum",
-                            float(sum(v["total_arnoldi_mean"] for v in per_matrix.values())))
-        return float(np.mean(running_scores))
+            trial.set_user_attr("per_matrix", per_matrix)
+            trial.set_user_attr("converged_matrix_count",
+                                int(sum(1 for v in per_matrix.values() if v["converged_rate"] >= 0.5)))
+            trial.set_user_attr("total_arnoldi_sum",
+                                float(sum(v["total_arnoldi_mean"] for v in per_matrix.values())))
+            return float(np.mean(running_scores))
+        finally:
+            pbar.close()
+            if progress_slots is not None:
+                progress_slots.release(position)
 
     return objective
 
@@ -369,6 +395,11 @@ def main():
     parser.add_argument("--matrix-paths", nargs="+", default=None,
                         help="Optional explicit list of matrix files (overrides directory glob).")
     parser.add_argument("--n-trials", type=int, default=60)
+    parser.add_argument("--n-jobs", type=int, default=1,
+                        help="Parallel Optuna workers within this process. "
+                             "Use modest values on CPU-bound workloads.")
+    parser.add_argument("--show-live-progress", action="store_true",
+                        help="Show one live tqdm row per active trial plus an overall bar.")
     parser.add_argument("--n-startup-trials", type=int, default=15)
     parser.add_argument("--n-seeds", type=int, default=1,
                         help="Seeds per (trial, matrix). 1 keeps the search cheap.")
@@ -436,18 +467,36 @@ def main():
 
     out_path = Path(args.out)
 
+    overall_pbar = None
+    if args.show_live_progress:
+        overall_pbar = tqdm(
+            total=args.n_trials,
+            desc="study",
+            position=0,
+            dynamic_ncols=True,
+        )
+
     def _snapshot_callback(study: optuna.Study, _trial: optuna.trial.FrozenTrial):
+        if overall_pbar is not None:
+            overall_pbar.update(1)
         completed = sum(1 for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE)
         if completed and completed % args.export_every == 0:
             export_results(study, matrix_names, args, out_path)
 
-    study.optimize(
-        make_objective(matrices, args),
-        n_trials=args.n_trials,
-        callbacks=[_snapshot_callback],
-        show_progress_bar=True,
-        gc_after_trial=True,
-    )
+    progress_slots = _ProgressSlots(args.n_jobs) if args.show_live_progress else None
+
+    try:
+        study.optimize(
+            make_objective(matrices, args, progress_slots=progress_slots),
+            n_trials=args.n_trials,
+            n_jobs=args.n_jobs,
+            callbacks=[_snapshot_callback],
+            show_progress_bar=not args.show_live_progress,
+            gc_after_trial=True,
+        )
+    finally:
+        if overall_pbar is not None:
+            overall_pbar.close()
 
     export_results(study, matrix_names, args, out_path)
 

@@ -179,17 +179,29 @@ class GMRESEnv(gym.Env):
 
     def _compute_reward(self, prev_rel, curr_rel, m):
         """
-        Shaped reward:
+        Potential-based shaped reward (Ng, Harada, Russell 1999) with potential
 
-            -lambda_work * m + log(rel_{k-1}) - gamma_shape * log(rel_k)
+            Phi_tau(s) = -log( max(rho, tau) / tau )   <=  0,
 
-        with an additional terminal convergence bonus.
+        where rho = ||r|| / ||b|| is the relative residual and tau is the
+        convergence tolerance on rho. Phi is non-positive everywhere and
+        equals 0 exactly at convergence (rho <= tau).
+
+        The shaping term is gamma * Phi(s_{t+1}) - Phi(s_t), so
+
+            R_t = -lambda_work * m_t
+                  + log( max(rho_t,     tau) / tau )
+                  - gamma_shape * log( max(rho_{t+1}, tau) / tau )
+                  + convergence_bonus * 1{rho_{t+1} < tau <= rho_t}.
+
+        Because this is a true PBRS term with the same gamma the agent uses
+        for value bootstrapping, it preserves the optimal policy.
         """
-        eps = 1e-12
-        log_prev = np.log(max(prev_rel, eps))
-        log_curr = np.log(max(curr_rel, eps))
+        tau = self.tolerance
+        log_prev = np.log(max(prev_rel, tau) / tau)
+        log_curr = np.log(max(curr_rel, tau) / tau)
         reward = -self.lambda_work * m + log_prev - self.gamma_shape * log_curr
-        if curr_rel < self.tolerance <= prev_rel:
+        if curr_rel < tau <= prev_rel:
             reward += self.convergence_bonus
         return reward
 

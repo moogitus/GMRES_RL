@@ -1,11 +1,10 @@
 """
 train_dqn.py
 
-Simple DQN training/evaluation script for the canonical-RHS matrix collection
-from the paper, excluding garon2 and xenon2.
+Simple DQN training/evaluation script for the local matrix collection.
 
 Assumptions:
-  - use the matrix's packaged RHS from a local matrices folder
+  - always use the consistent RHS induced by x_true = 1
   - use the plain residual-norm tolerance from the environment
   - use the standalone GMRESEnv in env.py
 
@@ -83,11 +82,6 @@ def _largest_matrix_member(tar: tarfile.TarFile):
     return max(members, key=lambda member: member.size)
 
 
-def _rhs_member(tar: tarfile.TarFile):
-    members = [member for member in tar.getmembers() if member.name.endswith("_b.mtx")]
-    return max(members, key=lambda member: member.size) if members else None
-
-
 def _flatten_rhs(data) -> np.ndarray:
     arr = np.asarray(data, dtype=np.float64)
     if arr.ndim == 2 and 1 in arr.shape:
@@ -151,12 +145,6 @@ def _find_local_archive(name: str, matrices_dir: Path):
 
 def _find_local_problem_files(name: str, matrices_dir: Path):
     matrix_patterns = [f"{name}.mtx", f"{name}.mtx.gz"]
-    rhs_patterns = [
-        f"{name}_rhs1.mtx",
-        f"{name}_rhs1.mtx.gz",
-        f"{name}_b.mtx",
-        f"{name}_b.mtx.gz",
-    ]
 
     matrix_path = _first_existing([
         matrices_dir / f"{name}.mtx.gz",
@@ -164,25 +152,12 @@ def _find_local_problem_files(name: str, matrices_dir: Path):
         matrices_dir / name / f"{name}.mtx.gz",
         matrices_dir / name / f"{name}.mtx",
     ])
-    rhs_path = _first_existing([
-        matrices_dir / f"{name}_rhs1.mtx.gz",
-        matrices_dir / f"{name}_rhs1.mtx",
-        matrices_dir / f"{name}_b.mtx.gz",
-        matrices_dir / f"{name}_b.mtx",
-        matrices_dir / name / f"{name}_rhs1.mtx.gz",
-        matrices_dir / name / f"{name}_rhs1.mtx",
-        matrices_dir / name / f"{name}_b.mtx.gz",
-        matrices_dir / name / f"{name}_b.mtx",
-    ])
 
     if matrix_path is None:
         matrix_matches = _recursive_candidates(matrices_dir, matrix_patterns)
         matrix_path = matrix_matches[0] if matrix_matches else None
-    if rhs_path is None:
-        rhs_matches = _recursive_candidates(matrices_dir, rhs_patterns)
-        rhs_path = rhs_matches[0] if rhs_matches else None
 
-    return matrix_path, rhs_path
+    return matrix_path
 
 
 def load_problem(config: dict, matrices_dir: Path):
@@ -198,18 +173,12 @@ def load_problem(config: dict, matrices_dir: Path):
         print(f"  Using local archive {tar_path}")
         with tarfile.open(tar_path) as tar:
             matrix_member = _largest_matrix_member(tar)
-            rhs_member = _rhs_member(tar)
             with tar.extractfile(matrix_member) as handle:
                 A = mmread(io.BytesIO(handle.read()))
-            if rhs_member is not None:
-                with tar.extractfile(rhs_member) as handle:
-                    b = mmread(io.BytesIO(handle.read()))
-            else:
-                print(f"  No canonical RHS found for {config['name']}; generating consistent RHS")
-                b = _consistent_rhs(A)
+            b = _consistent_rhs(A)
         return _validate_problem(config["name"], A, b)
 
-    matrix_path, rhs_path = _find_local_problem_files(config["name"], matrices_dir)
+    matrix_path = _find_local_problem_files(config["name"], matrices_dir)
     if matrix_path is None:
         raise FileNotFoundError(
             f"Could not find local matrix files for {config['name']} in {matrices_dir}. "
@@ -218,12 +187,7 @@ def load_problem(config: dict, matrices_dir: Path):
 
     print(f"  Using local matrix {matrix_path}")
     A = _load_mtx_file(matrix_path)
-    if rhs_path is not None:
-        print(f"  Using local RHS {rhs_path}")
-        b = _load_mtx_file(rhs_path)
-    else:
-        print(f"  No canonical RHS found for {config['name']}; generating consistent RHS")
-        b = _consistent_rhs(A)
+    b = _consistent_rhs(A)
     return _validate_problem(config["name"], A, b)
 
 
@@ -346,7 +310,7 @@ def main():
     parser.add_argument("--m-max", type=int, default=20)
     parser.add_argument("--history-length", type=int, default=5)
     parser.add_argument("--tolerance", type=float, default=1e-6)
-    parser.add_argument("--max-cycles", type=int, default=1000)
+    parser.add_argument("--max-cycles", type=int, default=10000)
     parser.add_argument("--num-seeds", type=int, default=1)
     parser.add_argument("--base-seed", type=int, default=0)
     parser.add_argument("--gamma", type=float, default=0.9695)

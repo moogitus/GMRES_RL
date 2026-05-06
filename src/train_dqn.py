@@ -231,6 +231,7 @@ class _StopOnDone(BaseCallback):
     def __init__(self):
         super().__init__()
         self.residuals = []
+        self.relative_residuals = []
         self.ms = []
         self._done = False
 
@@ -241,6 +242,8 @@ class _StopOnDone(BaseCallback):
         ):
             if "residual_norm" in info:
                 self.residuals.append(float(info["residual_norm"]))
+            if "relative_residual_norm" in info:
+                self.relative_residuals.append(float(info["relative_residual_norm"]))
             if "current_m" in info:
                 self.ms.append(int(info["current_m"]))
             if done:
@@ -290,9 +293,10 @@ def run_dqn(A, b, args, seed):
     elapsed = time.perf_counter() - t0
 
     residuals = np.array(logger.residuals, dtype=np.float64)
+    relative_residuals = np.array(logger.relative_residuals, dtype=np.float64)
     ms = np.array(logger.ms, dtype=np.int64)
-    if np.any(residuals < args.tolerance):
-        idx = int(np.argmax(residuals < args.tolerance)) + 1
+    if np.any(relative_residuals < args.tolerance):
+        idx = int(np.argmax(relative_residuals < args.tolerance)) + 1
         used_ms = ms[:idx]
         return {
             "converged": True,
@@ -301,6 +305,7 @@ def run_dqn(A, b, args, seed):
             "mean_m": float(used_ms.mean()),
             "elapsed_seconds": float(elapsed),
             "final_residual_norm": float(residuals[idx - 1]),
+            "final_relative_residual_norm": float(relative_residuals[idx - 1]),
         }
 
     return {
@@ -310,6 +315,7 @@ def run_dqn(A, b, args, seed):
         "mean_m": float(ms.mean()) if len(ms) else float("nan"),
         "elapsed_seconds": float(elapsed),
         "final_residual_norm": float(residuals[-1]) if len(residuals) else float("inf"),
+        "final_relative_residual_norm": float(relative_residuals[-1]) if len(relative_residuals) else float("inf"),
     }
 
 
@@ -328,6 +334,7 @@ def summarise_runs(runs):
         "time_std": _std("elapsed_seconds"),
         "cycles_mean": _avg("cycles_to_tol"),
         "final_residual_norm_mean": _avg("final_residual_norm"),
+        "final_relative_residual_norm_mean": _avg("final_relative_residual_norm"),
     }
 
 
@@ -389,7 +396,7 @@ def main():
             print(
                 f"  seed={seed:02d}: arnoldi={run['total_arnoldi']:8d}  "
                 f"time={run['elapsed_seconds']:8.2f}s  mean_m={run['mean_m']:5.2f}  "
-                f"final_res={run['final_residual_norm']:.3e}  conv={run['converged']}"
+                f"final_relres={run['final_relative_residual_norm']:.3e}  conv={run['converged']}"
             )
 
         results[config["name"]] = {

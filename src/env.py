@@ -3,7 +3,7 @@ Discrete-action GMRES environment with the shaped reward. Does not include full 
 
 Observation:
   - last k restart choices (normalized)
-  - last k log residual norms
+  - last k log relative residual norms
 
 Action:
   - index into restart values 1..m_max
@@ -48,6 +48,7 @@ class GMRESEnv(gym.Env):
         # Linear system
         self.A = A
         self.b = b
+        self.b_norm = max(float(np.linalg.norm(b)), 1e-12)
         self.n = A.shape[0]
         self.m_max = m_max
         self.tolerance = float(tolerance)
@@ -67,12 +68,12 @@ class GMRESEnv(gym.Env):
         self.action_space = spaces.Discrete(len(self.action_ms))
 
         # Observation:
-        #   [last k restart choices / m_max, last k residual norms]
+        #   [last k restart choices / m_max, last k log relative residual norms]
         self.observation_space = spaces.Box(
             low=np.concatenate(
                 [
                     np.zeros(self.history_length, dtype=np.float32),
-                    np.zeros(self.history_length, dtype=np.float32),
+                    np.full(self.history_length, np.finfo(np.float32).min, dtype=np.float32),
                 ]
             ),
             high=np.concatenate(
@@ -105,11 +106,14 @@ class GMRESEnv(gym.Env):
         self.total_arnoldi = 0
         self.restart_history = np.zeros(self.history_length, dtype=np.float32)
         self.residual_history = np.zeros(self.history_length, dtype=np.float32)
-        self.residual_history[-1] = np.float32(np.log(max(self.current_residual_norm, 1e-12)))
+        self.residual_history[-1] = np.float32(
+            np.log(max(self._relative_residual(self.current_residual_norm), 1e-12))
+        )
 
         obs = self._build_observation()
         info = {
             "residual_norm": self.current_residual_norm,
+            "relative_residual_norm": self._relative_residual(self.current_residual_norm),
             "cycle_count": self.cycle_count,
             "total_arnoldi": self.total_arnoldi,
         }
@@ -124,11 +128,13 @@ class GMRESEnv(gym.Env):
         prev_norm = self.current_residual_norm
 
         # Early-convergence guard: if we're already at tolerance, terminate cleanly.
-        if prev_norm < self.tolerance:
+        prev_rel = self._relative_residual(prev_norm)
+        if prev_rel < self.tolerance:
             obs = self._build_observation()
             return obs, 0.0, True, False, {
                 "current_m": m,
                 "residual_norm": prev_norm,
+                "relative_residual_norm": prev_rel,
                 "cycle_count": self.cycle_count,
                 "total_arnoldi": self.total_arnoldi,
             }
@@ -142,16 +148,17 @@ class GMRESEnv(gym.Env):
         self.total_arnoldi += m
 
         # Reward
-        reward = self._compute_reward(prev_norm, self.current_residual_norm, m)
+        curr_rel = self._relative_residual(self.current_residual_norm)
+        reward = self._compute_reward(prev_rel, curr_rel, m)
 
         # Update k-step history state.
         self.restart_history = np.roll(self.restart_history, -1)
         self.restart_history[-1] = np.float32(m / self.m_max)
         self.residual_history = np.roll(self.residual_history, -1)
-        self.residual_history[-1] = np.float32(np.log(max(self.current_residual_norm, 1e-12)))
+        self.residual_history[-1] = np.float32(np.log(max(curr_rel, 1e-12)))
 
         # Termination / truncation
-        terminated = bool(self.current_residual_norm < self.tolerance)
+        terminated = bool(curr_rel < self.tolerance)
         truncated = bool(self.cycle_count >= self.max_cycles) and not terminated
 
         obs = self._build_observation()
@@ -159,6 +166,8 @@ class GMRESEnv(gym.Env):
             "current_m": m,
             "residual_norm": self.current_residual_norm,
             "prev_residual_norm": prev_norm,
+            "relative_residual_norm": curr_rel,
+            "prev_relative_residual_norm": prev_rel,
             "cycle_count": self.cycle_count,
             "total_arnoldi": self.total_arnoldi,
         }
@@ -168,21 +177,24 @@ class GMRESEnv(gym.Env):
     # Reward
     # ------------------------------------------------------------------ #
 
-    def _compute_reward(self, prev_norm, curr_norm, m):
+    def _compute_reward(self, prev_rel, curr_rel, m):
         """
         Shaped reward:
 
-            -lambda_work * m + log(||r_{k-1}||) - gamma_shape * log(||r_k||)
+            -lambda_work * m + log(rel_{k-1}) - gamma_shape * log(rel_k)
 
         with an additional terminal convergence bonus.
         """
         eps = 1e-12
-        log_prev = np.log(max(prev_norm, eps))
-        log_curr = np.log(max(curr_norm, eps))
+        log_prev = np.log(max(prev_rel, eps))
+        log_curr = np.log(max(curr_rel, eps))
         reward = -self.lambda_work * m + log_prev - self.gamma_shape * log_curr
-        if curr_norm < self.tolerance <= prev_norm:
+        if curr_rel < self.tolerance <= prev_rel:
             reward += self.convergence_bonus
         return reward
+
+    def _relative_residual(self, residual_norm):
+        return float(residual_norm) / self.b_norm
 
     # ------------------------------------------------------------------ #
     # Observation

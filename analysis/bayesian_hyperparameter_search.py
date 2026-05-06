@@ -1,34 +1,24 @@
 """
 analysis/bayesian_hyperparameter_search.py
 
-Bayesian hyperparameter search (Optuna TPE) for the GMRES_RL DQN agent on the
-cavity05-08 DRIVCAV matrices. Runs TWO INDEPENDENT studies per matrix in a
-single invocation:
+Bayesian hyperparameter search (Optuna TPE) for the GMRES_RL DQN agent's
+PBRS reward (env.py). Sweeps the three reward-shaping coefficients over a
+SINGLE study aggregated across the full sweep_matrices/ benchmark, optimizing
+mean total Arnoldi steps to convergence.
 
-    1. objective = "arnoldi" : minimize mean total_arnoldi-to-convergence
-    2. objective = "time"    : minimize mean wall-clock seconds-to-convergence
+Search space:
+    lambda_work        log-uniform [1e-4, 1.0]      per-cycle work penalty
+    gamma_shape        uniform     [0.80, 0.999]    PBRS discount + DQN gamma
+    convergence_bonus  uniform     [0.0, 100.0]     terminal bonus B
 
-Both studies share the same search space; reporting both lets us compare which
-hyperparameters minimize numerical work vs Python/torch overhead.
+Right-hand side: b = A @ ones for every matrix.
 
-Search space (wide, identical across matrices and objectives):
-    learning_rate           log-uniform [1e-5, 1e-2]
-    lambda_work (reward)    log-uniform [1e-4, 1.0]
-    gamma_shape (reward)    uniform     [0.80, 0.999]
-    convergence_bonus B     uniform     [0.0, 100.0]
-    history_length k        int         [1, 20]
+Objective: mean total_arnoldi over the full matrix set (one trial = train+solve
+on every matrix; non-convergent solves penalized by max_cycles*m_max).
 
-Right-hand side: b = A @ ones (consistent RHS) for every matrix; we ignore the
-Problem.b shipped with the .mat file.
-
-Non-convergent runs are penalized so the optimizer always prefers a convergent
-trial over a non-convergent one (penalty is objective-specific).
-
-Run (one terminal command does all 4 matrices x 2 objectives):
+Run (default sweeps every .tar.gz / .mtx / .mat in matrices/sweep_matrices/):
     python analysis/bayesian_hyperparameter_search.py --n-trials 60
-    python analysis/bayesian_hyperparameter_search.py \\
-        --matrices cavity05 cavity07 --n-trials 100 --enable-pruner
-    python analysis/bayesian_hyperparameter_search.py --objectives arnoldi   # only one
+    python analysis/bayesian_hyperparameter_search.py --n-trials 100 --enable-pruner
 
 Requires: optuna (`pip install optuna`).
 """
@@ -36,18 +26,22 @@ Requires: optuna (`pip install optuna`).
 from __future__ import annotations
 
 import argparse
+import gzip
+import io
 import json
 import sys
+import tarfile
 import time
 from pathlib import Path
 
 import numpy as np
 import optuna
 import torch
-from scipy.io import loadmat
+from scipy.io import loadmat, mmread
 from scipy.sparse import csr_matrix, issparse
 from stable_baselines3 import DQN
 from stable_baselines3.common.callbacks import BaseCallback
+from tqdm.auto import tqdm
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_DIR = REPO_ROOT / "src"
@@ -56,28 +50,82 @@ if str(SRC_DIR) not in sys.path:
 
 from env import GMRESEnv  # noqa: E402
 
-DEFAULT_MATRICES = ["cavity05", "cavity06", "cavity07", "cavity08"]
-OBJECTIVES = ("arnoldi", "time")
+DEFAULT_MATRICES_DIR = REPO_ROOT / "matrices" / "sweep_matrices"
 
 
 # --------------------------------------------------------------------------- #
-# Matrix loading
+# Matrix loading (handles .tar.gz, .mtx[.gz], .mat). b = A @ ones always.
 # --------------------------------------------------------------------------- #
 
-def load_matrix(name: str, matrices_dir: Path):
-    """Load A from a SuiteSparse .mat file; build b = A @ ones."""
-    path = matrices_dir / f"{name}.mat"
-    if not path.exists():
-        raise FileNotFoundError(f"missing {path}")
+def _consistent_rhs(A) -> np.ndarray:
+    x_true = np.ones(A.shape[1], dtype=np.float64)
+    return np.asarray(A @ x_true, dtype=np.float64).reshape(-1)
+
+
+def _largest_mtx_member(tar: tarfile.TarFile):
+    members = [
+        m for m in tar.getmembers()
+        if m.name.endswith(".mtx") and not m.name.endswith("_b.mtx")
+    ]
+    if not members:
+        raise ValueError("no .mtx file in archive")
+    return max(members, key=lambda m: m.size)
+
+
+def _load_archive(path: Path):
+    with tarfile.open(path) as tar:
+        member = _largest_mtx_member(tar)
+        with tar.extractfile(member) as fh:
+            return mmread(io.BytesIO(fh.read()))
+
+
+def _load_mtx(path: Path):
+    opener = gzip.open if path.name.endswith(".gz") else open
+    with opener(path, "rb") as fh:
+        return mmread(io.BytesIO(fh.read()))
+
+
+def _load_mat(path: Path):
     data = loadmat(path)
     problem = data["Problem"]
     A = problem["A"][0, 0]
+    return A
+
+
+def load_matrix(path: Path):
+    """Load A from .tar.gz, .mtx[.gz], or .mat. Returns (name, A_csr, b)."""
+    name = path.name
+    for suffix in (".tar.gz", ".tgz", ".mtx.gz", ".mtx", ".mat"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+
+    if path.name.endswith(".tar.gz") or path.name.endswith(".tgz"):
+        A = _load_archive(path)
+    elif path.name.endswith(".mat"):
+        A = _load_mat(path)
+    else:
+        A = _load_mtx(path)
+
     if not issparse(A):
         A = csr_matrix(A)
     A = csr_matrix(A.astype(np.float64))
-    x_true = np.ones(A.shape[1], dtype=np.float64)
-    b = np.asarray(A @ x_true, dtype=np.float64).reshape(-1)
-    return A, b
+    if A.shape[0] != A.shape[1]:
+        raise ValueError(f"{path.name}: not square ({A.shape})")
+    b = _consistent_rhs(A)
+    return name, A, b
+
+
+def discover_matrices(matrices_dir: Path) -> list[Path]:
+    """Find all matrix-bearing files at the top level of matrices_dir."""
+    if not matrices_dir.exists():
+        raise FileNotFoundError(f"matrices dir not found: {matrices_dir}")
+    paths = []
+    for pat in ("*.tar.gz", "*.tgz", "*.mtx", "*.mtx.gz", "*.mat"):
+        paths.extend(sorted(matrices_dir.glob(pat)))
+    if not paths:
+        raise FileNotFoundError(f"no matrices found in {matrices_dir}")
+    return paths
 
 
 # --------------------------------------------------------------------------- #
@@ -116,7 +164,7 @@ def evaluate_solve(A, b, hp: dict, args, seed: int) -> dict:
         m_max=args.m_max,
         tolerance=args.tolerance,
         max_cycles=args.max_cycles,
-        history_length=hp["history_length"],
+        history_length=args.history_length,
         lambda_work=hp["lambda_work"],
         gamma_shape=hp["gamma_shape"],
         convergence_bonus=hp["convergence_bonus"],
@@ -124,11 +172,11 @@ def evaluate_solve(A, b, hp: dict, args, seed: int) -> dict:
     model = DQN(
         policy="MlpPolicy",
         env=env,
-        learning_rate=hp["learning_rate"],
+        learning_rate=args.learning_rate,
         buffer_size=args.buffer_size,
         learning_starts=args.learning_starts,
         batch_size=args.batch_size,
-        gamma=hp["gamma_shape"],
+        gamma=hp["gamma_shape"],          # tied to the PBRS discount
         train_freq=1,
         gradient_steps=1,
         target_update_interval=args.target_update_interval,
@@ -166,62 +214,73 @@ def evaluate_solve(A, b, hp: dict, args, seed: int) -> dict:
     }
 
 
-def trial_score(run: dict, objective: str, args) -> float:
-    """Per-run scalar (lower is better), dispatched on the active objective.
-
-    arnoldi: total_arnoldi (convergent) or max_cycles*m_max + total_arnoldi
-             (non-convergent, strictly worse than any convergent outcome).
-    time   : elapsed_seconds (convergent) or args.time_penalty + elapsed_seconds
-             (non-convergent, strictly worse than any convergent outcome).
-    """
-    if objective == "arnoldi":
-        if run["converged"]:
-            return float(run["total_arnoldi"])
-        return float(args.max_cycles * args.m_max + run["total_arnoldi"])
-    if objective == "time":
-        if run["converged"]:
-            return float(run["elapsed_seconds"])
-        return float(args.time_penalty + run["elapsed_seconds"])
-    raise ValueError(f"unknown objective: {objective}")
+def run_score(run: dict, args) -> float:
+    """Per-(matrix, seed) score: total_arnoldi if converged, else penalized."""
+    if run["converged"]:
+        return float(run["total_arnoldi"])
+    return float(args.max_cycles * args.m_max + run["total_arnoldi"])
 
 
 # --------------------------------------------------------------------------- #
-# Optuna objective (one matrix)
+# Optuna objective: aggregate over the whole matrix set
 # --------------------------------------------------------------------------- #
 
-def make_objective(matrix_name: str, objective_name: str, A, b, args):
+def make_objective(matrices, args):
+    """One trial = train+solve on every matrix; objective = mean run score."""
     def objective(trial: optuna.Trial) -> float:
         hp = {
-            "learning_rate":     trial.suggest_float("learning_rate", 1e-5, 1e-2, log=True),
             "lambda_work":       trial.suggest_float("lambda_work", 1e-4, 1.0, log=True),
             "gamma_shape":       trial.suggest_float("gamma_shape", 0.80, 0.999),
             "convergence_bonus": trial.suggest_float("convergence_bonus", 0.0, 100.0),
-            "history_length":    trial.suggest_int("history_length", 1, 20),
         }
 
-        seed_runs = []
-        scores = []
-        for s in range(args.n_seeds):
-            seed = args.seed + s
-            run = evaluate_solve(A, b, hp, args, seed)
-            seed_runs.append(run)
-            scores.append(trial_score(run, objective_name, args))
-            trial.report(float(np.mean(scores)), s)
-            if trial.should_prune():
-                trial.set_user_attr("per_seed", seed_runs)
-                trial.set_user_attr("matrix", matrix_name)
-                trial.set_user_attr("objective", objective_name)
-                raise optuna.TrialPruned()
+        per_matrix: dict[str, dict] = {}
+        running_scores: list[float] = []
+        report_step = 0
 
-        trial.set_user_attr("per_seed", seed_runs)
-        trial.set_user_attr("matrix", matrix_name)
-        trial.set_user_attr("objective", objective_name)
-        trial.set_user_attr("converged_rate", float(np.mean([r["converged"] for r in seed_runs])))
-        trial.set_user_attr("total_arnoldi_mean", float(np.mean([r["total_arnoldi"] for r in seed_runs])))
-        trial.set_user_attr("total_arnoldi_std", float(np.std([r["total_arnoldi"] for r in seed_runs])))
-        trial.set_user_attr("elapsed_seconds_mean", float(np.mean([r["elapsed_seconds"] for r in seed_runs])))
-        trial.set_user_attr("elapsed_seconds_std", float(np.std([r["elapsed_seconds"] for r in seed_runs])))
-        return float(np.mean(scores))
+        pbar = tqdm(
+            matrices,
+            desc=f"trial {trial.number:>3d}",
+            leave=False,
+            position=1,
+            dynamic_ncols=True,
+        )
+        for name, A, b in pbar:
+            seed_runs = []
+            seed_scores = []
+            for s in range(args.n_seeds):
+                seed = args.seed + s
+                run = evaluate_solve(A, b, hp, args, seed)
+                seed_runs.append(run)
+                seed_scores.append(run_score(run, args))
+            per_matrix[name] = {
+                "converged_rate": float(np.mean([r["converged"] for r in seed_runs])),
+                "total_arnoldi_mean": float(np.mean([r["total_arnoldi"] for r in seed_runs])),
+                "total_arnoldi_std":  float(np.std([r["total_arnoldi"] for r in seed_runs])),
+                "score_mean": float(np.mean(seed_scores)),
+                "elapsed_seconds_mean": float(np.mean([r["elapsed_seconds"] for r in seed_runs])),
+                "per_seed": seed_runs,
+            }
+            running_scores.extend(seed_scores)
+            pbar.set_postfix({
+                "matrix": name[:14],
+                "running_mean": f"{np.mean(running_scores):.0f}",
+                "conv": f"{int(np.mean([r['converged'] for r in seed_runs]) * args.n_seeds)}/{args.n_seeds}",
+            })
+            trial.report(float(np.mean(running_scores)), report_step)
+            report_step += 1
+            if trial.should_prune():
+                pbar.close()
+                trial.set_user_attr("per_matrix", per_matrix)
+                raise optuna.TrialPruned()
+        pbar.close()
+
+        trial.set_user_attr("per_matrix", per_matrix)
+        trial.set_user_attr("converged_matrix_count",
+                            int(sum(1 for v in per_matrix.values() if v["converged_rate"] >= 0.5)))
+        trial.set_user_attr("total_arnoldi_sum",
+                            float(sum(v["total_arnoldi_mean"] for v in per_matrix.values())))
+        return float(np.mean(running_scores))
 
     return objective
 
@@ -237,14 +296,9 @@ def _trial_to_dict(t: optuna.trial.FrozenTrial) -> dict:
         "value": t.value,
         "params": t.params,
         "user_attrs": {
-            "matrix": t.user_attrs.get("matrix"),
-            "objective": t.user_attrs.get("objective"),
-            "converged_rate": t.user_attrs.get("converged_rate"),
-            "total_arnoldi_mean": t.user_attrs.get("total_arnoldi_mean"),
-            "total_arnoldi_std": t.user_attrs.get("total_arnoldi_std"),
-            "elapsed_seconds_mean": t.user_attrs.get("elapsed_seconds_mean"),
-            "elapsed_seconds_std": t.user_attrs.get("elapsed_seconds_std"),
-            "per_seed": t.user_attrs.get("per_seed", []),
+            "converged_matrix_count": t.user_attrs.get("converged_matrix_count"),
+            "total_arnoldi_sum": t.user_attrs.get("total_arnoldi_sum"),
+            "per_matrix": t.user_attrs.get("per_matrix", {}),
         },
         "intermediate_values": dict(t.intermediate_values),
         "datetime_start": t.datetime_start.isoformat() if t.datetime_start else None,
@@ -252,93 +306,55 @@ def _trial_to_dict(t: optuna.trial.FrozenTrial) -> dict:
     }
 
 
-def _study_summary(study: optuna.Study) -> dict:
+def export_results(study: optuna.Study, matrix_names: list[str], args, out_path: Path):
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
     best = study.best_trial if completed else None
-    return {
-        "study_name": study.study_name,
-        "n_trials_total": len(study.trials),
-        "n_trials_completed": len(completed),
-        "best_trial": (
-            None if best is None else {
-                "number": best.number,
-                "value": best.value,
-                "params": best.params,
-                "user_attrs": {
-                    "converged_rate": best.user_attrs.get("converged_rate"),
-                    "total_arnoldi_mean": best.user_attrs.get("total_arnoldi_mean"),
-                    "total_arnoldi_std": best.user_attrs.get("total_arnoldi_std"),
-                    "elapsed_seconds_mean": best.user_attrs.get("elapsed_seconds_mean"),
-                    "elapsed_seconds_std": best.user_attrs.get("elapsed_seconds_std"),
-                },
-            }
-        ),
-        "trials": [_trial_to_dict(t) for t in study.trials],
-    }
-
-
-def export_results(studies: dict[str, dict[str, optuna.Study]], args, out_path: Path):
-    """Export results nested as studies[objective][matrix]."""
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    def _best_block(s: optuna.Study) -> dict | None:
-        completed = [t for t in s.trials if t.state == optuna.trial.TrialState.COMPLETE]
-        if not completed:
-            return None
-        b = s.best_trial
-        return {
-            "value": s.best_value,
-            "params": s.best_params,
-            "user_attrs": {
-                "converged_rate": b.user_attrs.get("converged_rate"),
-                "total_arnoldi_mean": b.user_attrs.get("total_arnoldi_mean"),
-                "total_arnoldi_std": b.user_attrs.get("total_arnoldi_std"),
-                "elapsed_seconds_mean": b.user_attrs.get("elapsed_seconds_mean"),
-                "elapsed_seconds_std": b.user_attrs.get("elapsed_seconds_std"),
-            },
-        }
-
     payload = {
         "meta": {
-            "matrices": sorted({m for obj_studies in studies.values() for m in obj_studies}),
-            "objectives": list(studies.keys()),
+            "study_name": study.study_name,
+            "matrices": matrix_names,
+            "n_matrices": len(matrix_names),
+            "n_trials_total": len(study.trials),
+            "n_trials_completed": len(completed),
             "rhs": "b = A @ ones",
             "search_space": {
-                "learning_rate":     {"low": 1e-5, "high": 1e-2, "log": True},
                 "lambda_work":       {"low": 1e-4, "high": 1.0,   "log": True},
                 "gamma_shape":       {"low": 0.80, "high": 0.999, "log": False},
                 "convergence_bonus": {"low": 0.0,  "high": 100.0, "log": False},
-                "history_length":    {"low": 1,    "high": 20,    "type": "int"},
             },
             "fixed": {
                 "m_max": args.m_max,
                 "tolerance": args.tolerance,
                 "max_cycles": args.max_cycles,
+                "history_length": args.history_length,
                 "seed": args.seed,
                 "n_seeds": args.n_seeds,
                 "device": args.device,
+                "learning_rate": args.learning_rate,
                 "buffer_size": args.buffer_size,
                 "learning_starts": args.learning_starts,
                 "batch_size": args.batch_size,
                 "target_update_interval": args.target_update_interval,
                 "exploration_fraction": args.exploration_fraction,
                 "exploration_final_eps": args.exploration_final_eps,
-                "time_penalty": args.time_penalty,
             },
-            "objective_definitions": {
-                "arnoldi": "mean total_arnoldi over seeds; non-convergent penalized by max_cycles*m_max",
-                "time":    "mean elapsed_seconds over seeds; non-convergent penalized by time_penalty",
-            },
+            "objective": "mean total_arnoldi over (matrices x seeds); non-convergent penalized by max_cycles*m_max",
             "sampler": "TPE (multivariate)",
         },
-        "best_per_matrix": {
-            objective: {name: _best_block(s) for name, s in obj_studies.items()}
-            for objective, obj_studies in studies.items()
-        },
-        "studies": {
-            objective: {name: _study_summary(s) for name, s in obj_studies.items()}
-            for objective, obj_studies in studies.items()
-        },
+        "best_trial": (
+            None if best is None else {
+                "number": best.number,
+                "value": best.value,
+                "params": best.params,
+                "user_attrs": {
+                    "converged_matrix_count": best.user_attrs.get("converged_matrix_count"),
+                    "total_arnoldi_sum": best.user_attrs.get("total_arnoldi_sum"),
+                    "per_matrix": best.user_attrs.get("per_matrix", {}),
+                },
+            }
+        ),
+        "trials": [_trial_to_dict(t) for t in study.trials],
     }
     out_path.write_text(json.dumps(payload, indent=2, default=str))
 
@@ -349,114 +365,104 @@ def export_results(studies: dict[str, dict[str, optuna.Study]], args, out_path: 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--matrices-dir", type=str, default="matrices")
-    parser.add_argument("--matrices", nargs="+", default=DEFAULT_MATRICES,
-                        help="Subset of matrix names (one independent study per name).")
-    parser.add_argument("--n-trials", type=int, default=60,
-                        help="Trials per matrix (each matrix gets its own Optuna study).")
+    parser.add_argument("--matrices-dir", type=str, default=str(DEFAULT_MATRICES_DIR))
+    parser.add_argument("--matrix-paths", nargs="+", default=None,
+                        help="Optional explicit list of matrix files (overrides directory glob).")
+    parser.add_argument("--n-trials", type=int, default=60)
     parser.add_argument("--n-startup-trials", type=int, default=15)
     parser.add_argument("--n-seeds", type=int, default=1,
-                        help="Seeds per trial; raise for noise reduction at proportional cost.")
+                        help="Seeds per (trial, matrix). 1 keeps the search cheap.")
     parser.add_argument("--m-max", type=int, default=20)
     parser.add_argument("--tolerance", type=float, default=1e-6)
     parser.add_argument("--max-cycles", type=int, default=5000)
+    parser.add_argument("--history-length", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="cpu")
+    # Fixed (not searched) DQN/training hyperparameters.
+    # learning-rate: 1e-3 is a balanced default for SB3 DQN with a small MLP and
+    # short-horizon single-life RL (above the 1e-4 stock default to fit the
+    # ~hundreds-to-thousands-of-cycles budget; below 3e-3 to avoid instability).
+    parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--buffer-size", type=int, default=10_000)
     parser.add_argument("--learning-starts", type=int, default=25)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--target-update-interval", type=int, default=100)
     parser.add_argument("--exploration-fraction", type=float, default=0.10)
     parser.add_argument("--exploration-final-eps", type=float, default=0.01)
-    parser.add_argument("--objectives", nargs="+", default=list(OBJECTIVES),
-                        choices=list(OBJECTIVES),
-                        help="Which objectives to run; default runs both Arnoldi and wall-clock.")
-    parser.add_argument("--time-penalty", type=float, default=1.0e6,
-                        help="Seconds added to non-convergent runs under the 'time' objective.")
-    parser.add_argument("--study-prefix", type=str, default="gmres_dqn")
+    parser.add_argument("--study-name", type=str, default="gmres_dqn_pbrs_sweep")
     parser.add_argument("--storage", type=str, default=None,
-                        help="Optional Optuna storage URL (e.g. sqlite:///analysis/results/cavity_search.db) for resumable studies.")
+                        help="Optional Optuna storage URL for resumable studies "
+                             "(e.g. sqlite:///analysis/results/pbrs_sweep.db).")
     parser.add_argument("--enable-pruner", action="store_true",
-                        help="Enable Optuna MedianPruner across the seed loop within a trial.")
+                        help="Enable MedianPruner across the matrix loop within a trial.")
     parser.add_argument("--out", type=str,
-                        default="analysis/results/cavity_bayes_search.json")
-    parser.add_argument("--export-every", type=int, default=10,
-                        help="Re-export the JSON snapshot every N completed trials so partial progress is never lost.")
+                        default="analysis/results/pbrs_sweep.json")
+    parser.add_argument("--export-every", type=int, default=5,
+                        help="Snapshot the JSON every N completed trials.")
     args = parser.parse_args()
 
-    matrices_dir = Path(args.matrices_dir).resolve()
-    print(f"Loading {len(args.matrices)} matrices from {matrices_dir}")
+    matrices_dir = Path(args.matrices_dir).expanduser().resolve()
+    if args.matrix_paths is not None:
+        paths = [Path(p).expanduser().resolve() for p in args.matrix_paths]
+    else:
+        paths = discover_matrices(matrices_dir)
+
+    print(f"Loading {len(paths)} matrices from {matrices_dir}")
     matrices = []
-    for name in args.matrices:
-        A, b = load_matrix(name, matrices_dir)
-        print(f"  {name}: n={A.shape[0]}, nnz={A.nnz}, ||b||={float(np.linalg.norm(b)):.3e}")
+    for p in paths:
+        name, A, b = load_matrix(p)
+        print(f"  {name:24s}  n={A.shape[0]:7d}  nnz={A.nnz:9d}  ||b||={float(np.linalg.norm(b)):.3e}")
         matrices.append((name, A, b))
+    matrix_names = [m[0] for m in matrices]
+
+    sampler = optuna.samplers.TPESampler(
+        n_startup_trials=args.n_startup_trials,
+        seed=args.seed,
+        multivariate=True,
+        group=True,
+    )
+    pruner = (
+        optuna.pruners.MedianPruner(n_startup_trials=args.n_startup_trials, n_warmup_steps=1)
+        if args.enable_pruner else optuna.pruners.NopPruner()
+    )
+    study = optuna.create_study(
+        study_name=args.study_name,
+        storage=args.storage,
+        sampler=sampler,
+        pruner=pruner,
+        direction="minimize",
+        load_if_exists=True,
+    )
 
     out_path = Path(args.out)
-    studies: dict[str, dict[str, optuna.Study]] = {obj: {} for obj in args.objectives}
 
-    for objective_name in args.objectives:
-        for name, A, b in matrices:
-            print(f"\n{'='*72}\nStudy: matrix={name}  objective={objective_name}\n{'='*72}")
-            sampler = optuna.samplers.TPESampler(
-                n_startup_trials=args.n_startup_trials,
-                seed=args.seed,
-                multivariate=True,
-                group=True,
-            )
-            pruner = (
-                optuna.pruners.MedianPruner(n_startup_trials=args.n_startup_trials, n_warmup_steps=1)
-                if args.enable_pruner else optuna.pruners.NopPruner()
-            )
-            study = optuna.create_study(
-                study_name=f"{args.study_prefix}_{name}_{objective_name}",
-                storage=args.storage,
-                sampler=sampler,
-                pruner=pruner,
-                direction="minimize",
-                load_if_exists=True,
-            )
-            studies[objective_name][name] = study
+    def _snapshot_callback(study: optuna.Study, _trial: optuna.trial.FrozenTrial):
+        completed = sum(1 for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE)
+        if completed and completed % args.export_every == 0:
+            export_results(study, matrix_names, args, out_path)
 
-            def _snapshot_callback(study: optuna.Study, _trial: optuna.trial.FrozenTrial):
-                completed = sum(1 for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE)
-                if completed and completed % args.export_every == 0:
-                    export_results(studies, args, out_path)
+    study.optimize(
+        make_objective(matrices, args),
+        n_trials=args.n_trials,
+        callbacks=[_snapshot_callback],
+        show_progress_bar=True,
+        gc_after_trial=True,
+    )
 
-            study.optimize(
-                make_objective(name, objective_name, A, b, args),
-                n_trials=args.n_trials,
-                callbacks=[_snapshot_callback],
-                show_progress_bar=True,
-                gc_after_trial=True,
-            )
+    export_results(study, matrix_names, args, out_path)
 
-            completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
-            if completed:
-                best = study.best_trial
-                print(f"\n  best ({objective_name}) for {name}: value={best.value:.4f}")
-                print(f"    arnoldi_mean={best.user_attrs.get('total_arnoldi_mean')}  "
-                      f"time_mean={best.user_attrs.get('elapsed_seconds_mean'):.3f}s  "
-                      f"converged_rate={best.user_attrs.get('converged_rate')}")
-                for k, v in best.params.items():
-                    print(f"    {k}: {v}")
-
-            export_results(studies, args, out_path)
-
-    export_results(studies, args, out_path)
-    print(f"\nWrote per-(objective, matrix) studies to {out_path}")
-    print("\nSummary (best per matrix per objective):")
-    for objective_name, obj_studies in studies.items():
-        print(f"  [{objective_name}]")
-        for name, s in obj_studies.items():
-            completed = [t for t in s.trials if t.state == optuna.trial.TrialState.COMPLETE]
-            if not completed:
-                print(f"    {name}: no completed trials")
-                continue
-            b = s.best_trial
-            print(f"    {name}: value={s.best_value:.4f}  "
-                  f"arnoldi={b.user_attrs.get('total_arnoldi_mean')}  "
-                  f"time={b.user_attrs.get('elapsed_seconds_mean'):.3f}s")
+    completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+    if completed:
+        best = study.best_trial
+        print("\nBest trial:")
+        print(f"  number: {best.number}")
+        print(f"  value (mean total_arnoldi): {best.value:.2f}")
+        print(f"  converged matrices: {best.user_attrs.get('converged_matrix_count')}/{len(matrix_names)}")
+        for k, v in best.params.items():
+            print(f"    {k}: {v}")
+    else:
+        print("\nNo completed trials.")
+    print(f"\nWrote {len(study.trials)} trials to {out_path}")
 
 
 if __name__ == "__main__":

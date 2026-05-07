@@ -1,0 +1,2713 @@
+{
+  "meta": {
+    "num_matrices": 20,
+    "num_rhs_per_matrix": 5,
+    "num_seeds_per_run": 2,
+    "rhs_master_seed": 42,
+    "rhs_distribution": "standard_normal_unit_norm",
+    "tolerance_relative": 1e-06,
+    "max_cycles": 5000,
+    "m_max": 20,
+    "dqn_hyperparams": {
+      "m_max": 20,
+      "history_length": 5,
+      "tolerance": 1e-06,
+      "max_cycles": 5000,
+      "gamma": 0.925,
+      "lambda_work": 0.01,
+      "convergence_bonus": 9.0,
+      "learning_rate": 0.003,
+      "buffer_size": 10000,
+      "learning_starts": 25,
+      "batch_size": 32,
+      "target_update_interval": 100,
+      "exploration_fraction": 0.1,
+      "exploration_final_eps": 0.01
+    },
+    "notes": [
+      "GMRES(20) is deterministic; only one run per RHS is recorded. DQN's seed controls both the policy network init and exploration draws, so DQN gets num_seeds independent runs per RHS."
+    ]
+  },
+  "results": [
+    {
+      "name": "convdiff_n1000_eps05_easy",
+      "path": "/Users/tylerpellek/RL_Final/GMRES_RL/matrices/kappa_sweep_20_matrices/convdiff_n1000_eps05_easy.mtx",
+      "n": 1000,
+      "nnz": 2998,
+      "condition_number": 114466.90285658417,
+      "per_rhs": [
+        {
+          "rhs_index": 0,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 3037,
+              "elapsed_seconds": 0.2589816669933498,
+              "final_relative_residual": 8.993374219585514e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 3350,
+              "elapsed_seconds": 0.27569554233923554,
+              "final_relative_residual": 8.230659666214056e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 8340,
+              "elapsed_seconds": 0.3548642504028976,
+              "final_relative_residual": 9.72359113088394e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 1,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 2783,
+              "elapsed_seconds": 0.2223108746111393,
+              "final_relative_residual": 9.929830191630977e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 2205,
+              "elapsed_seconds": 0.17937195813283324,
+              "final_relative_residual": 9.60345320046043e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 6200,
+              "elapsed_seconds": 0.2684052921831608,
+              "final_relative_residual": 9.426509638556105e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 2,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 2684,
+              "elapsed_seconds": 0.21898666583001614,
+              "final_relative_residual": 9.350978836557957e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 2345,
+              "elapsed_seconds": 0.18535833340138197,
+              "final_relative_residual": 8.67715093380294e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 6900,
+              "elapsed_seconds": 0.2942985421977937,
+              "final_relative_residual": 9.760082449546204e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 3,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 2826,
+              "elapsed_seconds": 0.23003341630101204,
+              "final_relative_residual": 6.056630502082439e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 3024,
+              "elapsed_seconds": 0.24592708284035325,
+              "final_relative_residual": 9.606344556854577e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 9020,
+              "elapsed_seconds": 0.3831885838881135,
+              "final_relative_residual": 9.796706336005838e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 4,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 2888,
+              "elapsed_seconds": 0.24081687536090612,
+              "final_relative_residual": 9.76010854301651e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 3022,
+              "elapsed_seconds": 0.24922124994918704,
+              "final_relative_residual": 8.341597913981779e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 10760,
+              "elapsed_seconds": 0.4620799575932324,
+              "final_relative_residual": 9.813005115096935e-07
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "convdiff_n1000_eps10_medium",
+      "path": "/Users/tylerpellek/RL_Final/GMRES_RL/matrices/kappa_sweep_20_matrices/convdiff_n1000_eps10_medium.mtx",
+      "n": 1000,
+      "nnz": 2998,
+      "condition_number": 201877.91922173227,
+      "per_rhs": [
+        {
+          "rhs_index": 0,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 3877,
+              "elapsed_seconds": 0.32359295804053545,
+              "final_relative_residual": 5.932919244259219e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 4542,
+              "elapsed_seconds": 0.39589779172092676,
+              "final_relative_residual": 8.931680407732829e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 18520,
+              "elapsed_seconds": 0.7953830421902239,
+              "final_relative_residual": 9.958435056331328e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 1,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 3900,
+              "elapsed_seconds": 0.33187937503680587,
+              "final_relative_residual": 4.679004283407147e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 3439,
+              "elapsed_seconds": 0.3007973339408636,
+              "final_relative_residual": 9.319638793886543e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 25080,
+              "elapsed_seconds": 1.0681517501361668,
+              "final_relative_residual": 9.950369365730813e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 2,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 3016,
+              "elapsed_seconds": 0.24884337512776256,
+              "final_relative_residual": 9.989316251898073e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 3904,
+              "elapsed_seconds": 0.3217236250638962,
+              "final_relative_residual": 9.767549488576528e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 12820,
+              "elapsed_seconds": 0.550215792376548,
+              "final_relative_residual": 9.945911813079747e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 3,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 4414,
+              "elapsed_seconds": 0.38575958320870996,
+              "final_relative_residual": 9.999229348445381e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 3605,
+              "elapsed_seconds": 0.2968309582211077,
+              "final_relative_residual": 6.540378159776346e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 18100,
+              "elapsed_seconds": 0.7741176658309996,
+              "final_relative_residual": 9.960905419635211e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 4,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 4219,
+              "elapsed_seconds": 0.3532113330438733,
+              "final_relative_residual": 9.900064781973329e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 4282,
+              "elapsed_seconds": 0.36230645840987563,
+              "final_relative_residual": 8.121652584516231e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 19200,
+              "elapsed_seconds": 0.816260457970202,
+              "final_relative_residual": 9.89012556066826e-07
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "convdiff_n1000_eps15_hard",
+      "path": "/Users/tylerpellek/RL_Final/GMRES_RL/matrices/kappa_sweep_20_matrices/convdiff_n1000_eps15_hard.mtx",
+      "n": 1000,
+      "nnz": 2998,
+      "condition_number": 263509.7458405128,
+      "per_rhs": [
+        {
+          "rhs_index": 0,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 4608,
+              "elapsed_seconds": 0.3987987502478063,
+              "final_relative_residual": 7.728873343619775e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 3963,
+              "elapsed_seconds": 0.340249584056437,
+              "final_relative_residual": 8.322991159923647e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 36120,
+              "elapsed_seconds": 1.5437734168954194,
+              "final_relative_residual": 9.948972478726155e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 1,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 4391,
+              "elapsed_seconds": 0.3786398330703378,
+              "final_relative_residual": 9.329185641008665e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 4885,
+              "elapsed_seconds": 0.43848754186183214,
+              "final_relative_residual": 9.140696305695576e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 33380,
+              "elapsed_seconds": 1.4359865002334118,
+              "final_relative_residual": 9.955495794505101e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 2,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 5237,
+              "elapsed_seconds": 0.44470970798283815,
+              "final_relative_residual": 6.648468786097864e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 5552,
+              "elapsed_seconds": 0.49568687472492456,
+              "final_relative_residual": 9.997210536573856e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 40560,
+              "elapsed_seconds": 1.7353776670061052,
+              "final_relative_residual": 9.970999832723634e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 3,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 4135,
+              "elapsed_seconds": 0.35095524974167347,
+              "final_relative_residual": 9.996148074745868e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 4668,
+              "elapsed_seconds": 0.40383825032040477,
+              "final_relative_residual": 2.545620902040884e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 23040,
+              "elapsed_seconds": 0.988563290797174,
+              "final_relative_residual": 9.975418263918562e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 4,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 4058,
+              "elapsed_seconds": 0.35418241703882813,
+              "final_relative_residual": 5.93981814557805e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 3508,
+              "elapsed_seconds": 0.2955714580602944,
+              "final_relative_residual": 8.126393300596246e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 27340,
+              "elapsed_seconds": 1.1695764996111393,
+              "final_relative_residual": 9.943900895711777e-07
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "convdiff_n1100_eps25",
+      "path": "/Users/tylerpellek/RL_Final/GMRES_RL/matrices/kappa_sweep_20_matrices/convdiff_n1100_eps25.mtx",
+      "n": 1100,
+      "nnz": 3298,
+      "condition_number": 401488.75589574577,
+      "per_rhs": [
+        {
+          "rhs_index": 0,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 5053,
+              "elapsed_seconds": 0.44080054201185703,
+              "final_relative_residual": 9.493742344588448e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 5927,
+              "elapsed_seconds": 0.5457061249762774,
+              "final_relative_residual": 8.494688219532947e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 47320,
+              "elapsed_seconds": 2.160238583572209,
+              "final_relative_residual": 9.98243520600809e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 1,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 5272,
+              "elapsed_seconds": 0.48110800003632903,
+              "final_relative_residual": 2.2039680515857168e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 5344,
+              "elapsed_seconds": 0.4762828750535846,
+              "final_relative_residual": 2.8934201242506926e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 71060,
+              "elapsed_seconds": 3.219415667001158,
+              "final_relative_residual": 9.979699889093832e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 2,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 5039,
+              "elapsed_seconds": 0.44533800007775426,
+              "final_relative_residual": 9.975871478649355e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 5100,
+              "elapsed_seconds": 0.44161870796233416,
+              "final_relative_residual": 7.627792844100473e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 67320,
+              "elapsed_seconds": 3.0697359167970717,
+              "final_relative_residual": 9.976294991418608e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 3,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 6452,
+              "elapsed_seconds": 0.637295207940042,
+              "final_relative_residual": 9.074346249361058e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 3964,
+              "elapsed_seconds": 0.34708600025624037,
+              "final_relative_residual": 8.515951211432714e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 51480,
+              "elapsed_seconds": 2.3306319592520595,
+              "final_relative_residual": 9.991933046899792e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 4,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 6656,
+              "elapsed_seconds": 0.6336332922801375,
+              "final_relative_residual": 9.99980180806555e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 5661,
+              "elapsed_seconds": 0.493581417016685,
+              "final_relative_residual": 1.8297891662705688e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 86340,
+              "elapsed_seconds": 3.9521434172056615,
+              "final_relative_residual": 9.985634603287037e-07
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "convdiff_n1500_eps07",
+      "path": "/Users/tylerpellek/RL_Final/GMRES_RL/matrices/kappa_sweep_20_matrices/convdiff_n1500_eps07.mtx",
+      "n": 1500,
+      "nnz": 4498,
+      "condition_number": 343345.23018143245,
+      "per_rhs": [
+        {
+          "rhs_index": 0,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 5374,
+              "elapsed_seconds": 0.5251609589904547,
+              "final_relative_residual": 1.5173406118662133e-08
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 5079,
+              "elapsed_seconds": 0.48440812481567264,
+              "final_relative_residual": 5.365901568228885e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 33320,
+              "elapsed_seconds": 1.9208307079970837,
+              "final_relative_residual": 9.987601568489112e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 1,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 4506,
+              "elapsed_seconds": 0.4359002080745995,
+              "final_relative_residual": 4.0044144567186214e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 4520,
+              "elapsed_seconds": 0.4578089169226587,
+              "final_relative_residual": 2.308922011295532e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 35320,
+              "elapsed_seconds": 2.0465709171257913,
+              "final_relative_residual": 9.953463818289973e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 2,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 4877,
+              "elapsed_seconds": 0.4755812496878207,
+              "final_relative_residual": 3.359039475496022e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 5927,
+              "elapsed_seconds": 0.5816103341057897,
+              "final_relative_residual": 9.510422517408685e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 37560,
+              "elapsed_seconds": 2.1709730406291783,
+              "final_relative_residual": 9.963411298243203e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 3,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 5407,
+              "elapsed_seconds": 0.549689416307956,
+              "final_relative_residual": 9.30850714631378e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 4244,
+              "elapsed_seconds": 0.405172917060554,
+              "final_relative_residual": 7.577301377241115e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 25520,
+              "elapsed_seconds": 1.4738607089966536,
+              "final_relative_residual": 9.943098663864308e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 4,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 4692,
+              "elapsed_seconds": 0.45352462492883205,
+              "final_relative_residual": 5.849864798171404e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 4630,
+              "elapsed_seconds": 0.43702237494289875,
+              "final_relative_residual": 8.854467115689684e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 34760,
+              "elapsed_seconds": 2.024020832963288,
+              "final_relative_residual": 9.99359813666694e-07
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "convdiff_n1500_eps15_very_hard",
+      "path": "/Users/tylerpellek/RL_Final/GMRES_RL/matrices/kappa_sweep_20_matrices/convdiff_n1500_eps15_very_hard.mtx",
+      "n": 1500,
+      "nnz": 4498,
+      "condition_number": 592502.0573758605,
+      "per_rhs": [
+        {
+          "rhs_index": 0,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 6119,
+              "elapsed_seconds": 0.5999567504040897,
+              "final_relative_residual": 9.144962921106463e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 9094,
+              "elapsed_seconds": 0.9093574997968972,
+              "final_relative_residual": 9.85474158559915e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 98040,
+              "elapsed_seconds": 5.672705499920994,
+              "final_relative_residual": 9.999615631152693e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 1,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 5296,
+              "elapsed_seconds": 0.5357875418849289,
+              "final_relative_residual": 9.978304365713583e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 5281,
+              "elapsed_seconds": 0.5138556659221649,
+              "final_relative_residual": 8.757832869976718e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 85260,
+              "elapsed_seconds": 4.980872165877372,
+              "final_relative_residual": 9.965619139545368e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 2,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 5334,
+              "elapsed_seconds": 0.5294277500361204,
+              "final_relative_residual": 9.854330014685753e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 6859,
+              "elapsed_seconds": 0.71922054188326,
+              "final_relative_residual": 8.865969639818962e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 83100,
+              "elapsed_seconds": 4.836294875014573,
+              "final_relative_residual": 9.985365235731047e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 3,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 6207,
+              "elapsed_seconds": 0.6303913751617074,
+              "final_relative_residual": 7.46400920214276e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 5490,
+              "elapsed_seconds": 0.5480484580621123,
+              "final_relative_residual": 4.203934415576897e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 84060,
+              "elapsed_seconds": 4.898457124829292,
+              "final_relative_residual": 9.991162532061137e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 4,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 5641,
+              "elapsed_seconds": 0.5616042907349765,
+              "final_relative_residual": 8.85234883683519e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 6235,
+              "elapsed_seconds": 0.6321147079579532,
+              "final_relative_residual": 3.628324989352921e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 63480,
+              "elapsed_seconds": 3.6863063341006637,
+              "final_relative_residual": 9.962827979624387e-07
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "convdiff_n1800_eps08",
+      "path": "/Users/tylerpellek/RL_Final/GMRES_RL/matrices/kappa_sweep_20_matrices/convdiff_n1800_eps08.mtx",
+      "n": 1800,
+      "nnz": 5398,
+      "condition_number": 550873.9069597202,
+      "per_rhs": [
+        {
+          "rhs_index": 0,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 5458,
+              "elapsed_seconds": 0.5731950420886278,
+              "final_relative_residual": 6.73113865820785e-08
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 6826,
+              "elapsed_seconds": 0.7155089997686446,
+              "final_relative_residual": 6.891197962245539e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 63780,
+              "elapsed_seconds": 4.253648750018328,
+              "final_relative_residual": 9.999462567158183e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 1,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 4958,
+              "elapsed_seconds": 0.5175289586186409,
+              "final_relative_residual": 2.3519706525397138e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 6143,
+              "elapsed_seconds": 0.683418707922101,
+              "final_relative_residual": 6.025146486308148e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 43640,
+              "elapsed_seconds": 2.9179842500016093,
+              "final_relative_residual": 9.953490785714918e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 2,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 5709,
+              "elapsed_seconds": 0.5830724998377264,
+              "final_relative_residual": 9.998587665143164e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 6728,
+              "elapsed_seconds": 0.7084541670046747,
+              "final_relative_residual": 6.657028696439552e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 62180,
+              "elapsed_seconds": 4.192043541930616,
+              "final_relative_residual": 9.995538790735839e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 3,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 5720,
+              "elapsed_seconds": 0.5910349581390619,
+              "final_relative_residual": 8.160059521264334e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 5845,
+              "elapsed_seconds": 0.6054339581169188,
+              "final_relative_residual": 3.845499778558148e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 47300,
+              "elapsed_seconds": 3.144270666874945,
+              "final_relative_residual": 9.957107604070437e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 4,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 5035,
+              "elapsed_seconds": 0.5042168749496341,
+              "final_relative_residual": 9.302870386632599e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 5791,
+              "elapsed_seconds": 0.6135579999536276,
+              "final_relative_residual": 4.186653038401955e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 37180,
+              "elapsed_seconds": 2.4817211660556495,
+              "final_relative_residual": 9.984991975115721e-07
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "convdiff_n2000_eps10",
+      "path": "/Users/tylerpellek/RL_Final/GMRES_RL/matrices/kappa_sweep_20_matrices/convdiff_n2000_eps10.mtx",
+      "n": 2000,
+      "nnz": 5998,
+      "condition_number": 806704.5222073955,
+      "per_rhs": [
+        {
+          "rhs_index": 0,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 7667,
+              "elapsed_seconds": 0.9097758331336081,
+              "final_relative_residual": 6.557489243627242e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 7089,
+              "elapsed_seconds": 0.797125875018537,
+              "final_relative_residual": 9.718561753045637e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 93000,
+              "elapsed_seconds": 6.681421957910061,
+              "final_relative_residual": 9.989401546618494e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 1,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 7086,
+              "elapsed_seconds": 0.7726504998281598,
+              "final_relative_residual": 8.569809255835315e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 6817,
+              "elapsed_seconds": 0.7453495841473341,
+              "final_relative_residual": 6.642487476902208e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 7.181989583186805,
+              "final_relative_residual": 2.155251922257514e-06
+            }
+          ]
+        },
+        {
+          "rhs_index": 2,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 7206,
+              "elapsed_seconds": 0.8200739999301732,
+              "final_relative_residual": 9.344627901916034e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 7882,
+              "elapsed_seconds": 0.9048001249320805,
+              "final_relative_residual": 6.04679244334449e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 7.190422375220805,
+              "final_relative_residual": 1.5980530427007278e-06
+            }
+          ]
+        },
+        {
+          "rhs_index": 3,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 7595,
+              "elapsed_seconds": 0.9966080421581864,
+              "final_relative_residual": 6.258670420133111e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 6794,
+              "elapsed_seconds": 0.810140416957438,
+              "final_relative_residual": 6.389513896756198e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 83420,
+              "elapsed_seconds": 6.056156250182539,
+              "final_relative_residual": 9.993620320972422e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 4,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 6507,
+              "elapsed_seconds": 0.7178854998201132,
+              "final_relative_residual": 8.238847345988015e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 6746,
+              "elapsed_seconds": 0.7149408343248069,
+              "final_relative_residual": 8.290488053055664e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 71500,
+              "elapsed_seconds": 5.178615959361196,
+              "final_relative_residual": 9.98211786091789e-07
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "convdiff_n2000_eps15_extreme",
+      "path": "/Users/tylerpellek/RL_Final/GMRES_RL/matrices/kappa_sweep_20_matrices/convdiff_n2000_eps15_extreme.mtx",
+      "n": 2000,
+      "nnz": 5998,
+      "condition_number": 1052986.1001102552,
+      "per_rhs": [
+        {
+          "rhs_index": 0,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 6901,
+              "elapsed_seconds": 0.751653874758631,
+              "final_relative_residual": 9.357147018575077e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 8610,
+              "elapsed_seconds": 1.1072017080150545,
+              "final_relative_residual": 5.578597451455914e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 7.2300757500343025,
+              "final_relative_residual": 7.394019031415488e-06
+            }
+          ]
+        },
+        {
+          "rhs_index": 1,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 8418,
+              "elapsed_seconds": 1.0106987077742815,
+              "final_relative_residual": 9.97452460045068e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 7228,
+              "elapsed_seconds": 0.8028317079879344,
+              "final_relative_residual": 9.167323489726531e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 7.252127917017788,
+              "final_relative_residual": 7.38583132494521e-05
+            }
+          ]
+        },
+        {
+          "rhs_index": 2,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 5799,
+              "elapsed_seconds": 0.6495689172297716,
+              "final_relative_residual": 9.244723939515948e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 5751,
+              "elapsed_seconds": 0.6195241250097752,
+              "final_relative_residual": 9.485810565009131e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 62760,
+              "elapsed_seconds": 4.533609500154853,
+              "final_relative_residual": 9.980979197806321e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 3,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 7232,
+              "elapsed_seconds": 0.8969076657667756,
+              "final_relative_residual": 9.97137473397806e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 8107,
+              "elapsed_seconds": 1.0658361250534654,
+              "final_relative_residual": 9.773844587920378e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 7.216940249782056,
+              "final_relative_residual": 3.715452680217857e-05
+            }
+          ]
+        },
+        {
+          "rhs_index": 4,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 6932,
+              "elapsed_seconds": 0.7925754999741912,
+              "final_relative_residual": 9.81979844524571e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 8573,
+              "elapsed_seconds": 0.9761229157447815,
+              "final_relative_residual": 6.620821338146415e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 7.196059249807149,
+              "final_relative_residual": 0.0003884307965464796
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "convdiff_n2200_eps18",
+      "path": "/Users/tylerpellek/RL_Final/GMRES_RL/matrices/kappa_sweep_20_matrices/convdiff_n2200_eps18.mtx",
+      "n": 2200,
+      "nnz": 6598,
+      "condition_number": 1403198.5148726539,
+      "per_rhs": [
+        {
+          "rhs_index": 0,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 12229,
+              "elapsed_seconds": 1.628000041935593,
+              "final_relative_residual": 9.859023604057936e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 12007,
+              "elapsed_seconds": 1.4855666658841074,
+              "final_relative_residual": 8.869973606871026e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 7.7895482908934355,
+              "final_relative_residual": 0.00041950279613742973
+            }
+          ]
+        },
+        {
+          "rhs_index": 1,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 11047,
+              "elapsed_seconds": 1.4533750000409782,
+              "final_relative_residual": 4.812389101102436e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 8642,
+              "elapsed_seconds": 1.0752838333137333,
+              "final_relative_residual": 4.5211284320999925e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 7.7567205829545856,
+              "final_relative_residual": 0.0001560710633941835
+            }
+          ]
+        },
+        {
+          "rhs_index": 2,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 8282,
+              "elapsed_seconds": 1.0842723338864744,
+              "final_relative_residual": 8.24602440750391e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 8557,
+              "elapsed_seconds": 1.0247180829755962,
+              "final_relative_residual": 9.506172369766482e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 7.766435666009784,
+              "final_relative_residual": 0.00018708134595624146
+            }
+          ]
+        },
+        {
+          "rhs_index": 3,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 8798,
+              "elapsed_seconds": 1.1507946662604809,
+              "final_relative_residual": 8.459827505400633e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 9662,
+              "elapsed_seconds": 1.0877804169431329,
+              "final_relative_residual": 9.08588250326059e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 7.782158832997084,
+              "final_relative_residual": 0.0001887388999062395
+            }
+          ]
+        },
+        {
+          "rhs_index": 4,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 7646,
+              "elapsed_seconds": 0.8953917091712356,
+              "final_relative_residual": 7.831194980687185e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 8037,
+              "elapsed_seconds": 0.9847172503359616,
+              "final_relative_residual": 9.983378303547074e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 7.809769249986857,
+              "final_relative_residual": 0.00019828653056284655
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "convdiff_n2500_eps09",
+      "path": "/Users/tylerpellek/RL_Final/GMRES_RL/matrices/kappa_sweep_20_matrices/convdiff_n2500_eps09.mtx",
+      "n": 2500,
+      "nnz": 7498,
+      "condition_number": 1164611.7182913278,
+      "per_rhs": [
+        {
+          "rhs_index": 0,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 6971,
+              "elapsed_seconds": 0.9625931247137487,
+              "final_relative_residual": 9.78840270019336e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 9077,
+              "elapsed_seconds": 1.1564324158243835,
+              "final_relative_residual": 9.811255679139681e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 8.44585083425045,
+              "final_relative_residual": 9.081736363574496e-06
+            }
+          ]
+        },
+        {
+          "rhs_index": 1,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 7938,
+              "elapsed_seconds": 0.9770125411450863,
+              "final_relative_residual": 8.705624264586093e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 8863,
+              "elapsed_seconds": 1.1367801656015217,
+              "final_relative_residual": 7.035210959633425e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 8.445363708771765,
+              "final_relative_residual": 7.99237535893365e-05
+            }
+          ]
+        },
+        {
+          "rhs_index": 2,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 8530,
+              "elapsed_seconds": 1.1035890826024115,
+              "final_relative_residual": 7.997864264682563e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 6906,
+              "elapsed_seconds": 0.8556292918510735,
+              "final_relative_residual": 9.840172474444952e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 8.441972499713302,
+              "final_relative_residual": 3.2347153721356117e-06
+            }
+          ]
+        },
+        {
+          "rhs_index": 3,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 10556,
+              "elapsed_seconds": 1.4312222921289504,
+              "final_relative_residual": 2.53517165035645e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 10352,
+              "elapsed_seconds": 1.305448042228818,
+              "final_relative_residual": 5.832881162762165e-09
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 8.421220500022173,
+              "final_relative_residual": 4.794131590828925e-05
+            }
+          ]
+        },
+        {
+          "rhs_index": 4,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 6690,
+              "elapsed_seconds": 0.8208336252719164,
+              "final_relative_residual": 7.323094229442497e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 7637,
+              "elapsed_seconds": 0.9614305002614856,
+              "final_relative_residual": 5.543470860184122e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 8.522812500130385,
+              "final_relative_residual": 2.9679356272208064e-06
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "convdiff_n2500_eps18",
+      "path": "/Users/tylerpellek/RL_Final/GMRES_RL/matrices/kappa_sweep_20_matrices/convdiff_n2500_eps18.mtx",
+      "n": 2500,
+      "nnz": 7498,
+      "condition_number": 1811783.9887149285,
+      "per_rhs": [
+        {
+          "rhs_index": 0,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 12923,
+              "elapsed_seconds": 1.832420458085835,
+              "final_relative_residual": 9.306100022496707e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 11075,
+              "elapsed_seconds": 1.3577874996699393,
+              "final_relative_residual": 4.973219437849161e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 8.441929375287145,
+              "final_relative_residual": 0.0011079669371758046
+            }
+          ]
+        },
+        {
+          "rhs_index": 1,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 10492,
+              "elapsed_seconds": 1.3048986247740686,
+              "final_relative_residual": 9.473998579180908e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 13599,
+              "elapsed_seconds": 1.8346157921478152,
+              "final_relative_residual": 9.998182163081266e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 8.438423207961023,
+              "final_relative_residual": 0.0031455547406117933
+            }
+          ]
+        },
+        {
+          "rhs_index": 2,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 7807,
+              "elapsed_seconds": 0.9782179580070078,
+              "final_relative_residual": 8.911215232076622e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 10249,
+              "elapsed_seconds": 1.2422607918269932,
+              "final_relative_residual": 8.671139479991058e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 8.395992167294025,
+              "final_relative_residual": 0.0005376036277505371
+            }
+          ]
+        },
+        {
+          "rhs_index": 3,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 10807,
+              "elapsed_seconds": 1.5890503339469433,
+              "final_relative_residual": 9.928130553042012e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 9366,
+              "elapsed_seconds": 1.1816157912835479,
+              "final_relative_residual": 9.849572859179307e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 8.441295540891588,
+              "final_relative_residual": 0.0004160673703240162
+            }
+          ]
+        },
+        {
+          "rhs_index": 4,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 9218,
+              "elapsed_seconds": 1.145038208924234,
+              "final_relative_residual": 4.5515490071018523e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 9125,
+              "elapsed_seconds": 1.1013055420480669,
+              "final_relative_residual": 9.641249157938008e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 8.429857624694705,
+              "final_relative_residual": 0.001077562685864025
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "convdiff_n2800_eps20",
+      "path": "/Users/tylerpellek/RL_Final/GMRES_RL/matrices/kappa_sweep_20_matrices/convdiff_n2800_eps20.mtx",
+      "n": 2800,
+      "nnz": 8398,
+      "condition_number": 2385608.2076584916,
+      "per_rhs": [
+        {
+          "rhs_index": 0,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 12472,
+              "elapsed_seconds": 1.7527334578335285,
+              "final_relative_residual": 4.935658688706366e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 15051,
+              "elapsed_seconds": 2.198246832937002,
+              "final_relative_residual": 9.064847427630368e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 9.222854292020202,
+              "final_relative_residual": 0.0040443768723806795
+            }
+          ]
+        },
+        {
+          "rhs_index": 1,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 12746,
+              "elapsed_seconds": 1.9458962911739945,
+              "final_relative_residual": 9.680834952702137e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 12369,
+              "elapsed_seconds": 1.9413949996232986,
+              "final_relative_residual": 8.487337052014724e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 9.191396667156368,
+              "final_relative_residual": 0.00014523765748288462
+            }
+          ]
+        },
+        {
+          "rhs_index": 2,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 15284,
+              "elapsed_seconds": 2.3970407503657043,
+              "final_relative_residual": 8.56987293800182e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 8526,
+              "elapsed_seconds": 1.1580103333108127,
+              "final_relative_residual": 9.356123906154761e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 9.201767083257437,
+              "final_relative_residual": 0.0005997438878669149
+            }
+          ]
+        },
+        {
+          "rhs_index": 3,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 13753,
+              "elapsed_seconds": 2.2265285830944777,
+              "final_relative_residual": 9.459637867180273e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 13401,
+              "elapsed_seconds": 2.217780082952231,
+              "final_relative_residual": 9.164644079946735e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 9.205123375169933,
+              "final_relative_residual": 0.00012727254235360798
+            }
+          ]
+        },
+        {
+          "rhs_index": 4,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 10480,
+              "elapsed_seconds": 1.4957863339222968,
+              "final_relative_residual": 4.0861584669506124e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 14121,
+              "elapsed_seconds": 2.2843686672858894,
+              "final_relative_residual": 7.26213169004957e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 9.16232500039041,
+              "final_relative_residual": 0.0009797277239264094
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "convdiff_n3500_eps07",
+      "path": "/Users/tylerpellek/RL_Final/GMRES_RL/matrices/kappa_sweep_20_matrices/convdiff_n3500_eps07.mtx",
+      "n": 3500,
+      "nnz": 10498,
+      "condition_number": 1867899.5618598587,
+      "per_rhs": [
+        {
+          "rhs_index": 0,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 13124,
+              "elapsed_seconds": 2.237142290920019,
+              "final_relative_residual": 9.980713269117155e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 9489,
+              "elapsed_seconds": 1.3824528749100864,
+              "final_relative_residual": 9.542705877631865e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 10.848717583809048,
+              "final_relative_residual": 0.00021547649876633705
+            }
+          ]
+        },
+        {
+          "rhs_index": 1,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 8098,
+              "elapsed_seconds": 1.1561527918092906,
+              "final_relative_residual": 9.753205030823034e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 11079,
+              "elapsed_seconds": 1.6317509170621634,
+              "final_relative_residual": 9.999246599721576e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 10.870857458095998,
+              "final_relative_residual": 0.00035456133252439906
+            }
+          ]
+        },
+        {
+          "rhs_index": 2,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 10673,
+              "elapsed_seconds": 1.6471477076411247,
+              "final_relative_residual": 9.707303208349883e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 10472,
+              "elapsed_seconds": 1.5964407920837402,
+              "final_relative_residual": 9.99012680294614e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 10.981442791875452,
+              "final_relative_residual": 0.0002569798203651144
+            }
+          ]
+        },
+        {
+          "rhs_index": 3,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 9964,
+              "elapsed_seconds": 1.5091352500021458,
+              "final_relative_residual": 8.94177394646869e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 11085,
+              "elapsed_seconds": 1.6636142921634018,
+              "final_relative_residual": 9.444790146869234e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 10.884262416046113,
+              "final_relative_residual": 0.0002856807853079709
+            }
+          ]
+        },
+        {
+          "rhs_index": 4,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 8246,
+              "elapsed_seconds": 1.1802013330161572,
+              "final_relative_residual": 9.576002996699112e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 10148,
+              "elapsed_seconds": 1.5251872083172202,
+              "final_relative_residual": 9.805136092872959e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": false,
+              "total_arnoldi": 100000,
+              "elapsed_seconds": 10.889228000305593,
+              "final_relative_residual": 0.000162390635447506
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "convdiff_n500_eps05",
+      "path": "/Users/tylerpellek/RL_Final/GMRES_RL/matrices/kappa_sweep_20_matrices/convdiff_n500_eps05.mtx",
+      "n": 500,
+      "nnz": 1498,
+      "condition_number": 28674.233092216513,
+      "per_rhs": [
+        {
+          "rhs_index": 0,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 1353,
+              "elapsed_seconds": 0.07979858294129372,
+              "final_relative_residual": 9.172615524369088e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 1421,
+              "elapsed_seconds": 0.08849458256736398,
+              "final_relative_residual": 9.913708547177373e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 1620,
+              "elapsed_seconds": 0.039683000184595585,
+              "final_relative_residual": 9.804634101313697e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 1,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 1784,
+              "elapsed_seconds": 0.11249412503093481,
+              "final_relative_residual": 9.767870398487418e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 1418,
+              "elapsed_seconds": 0.08712575025856495,
+              "final_relative_residual": 8.317973887714218e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 1680,
+              "elapsed_seconds": 0.042674832977354527,
+              "final_relative_residual": 6.51186161225554e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 2,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 1394,
+              "elapsed_seconds": 0.09056799998506904,
+              "final_relative_residual": 6.784638250933239e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 1417,
+              "elapsed_seconds": 0.08695079199969769,
+              "final_relative_residual": 3.3458166260726896e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 1660,
+              "elapsed_seconds": 0.04162074998021126,
+              "final_relative_residual": 8.959012883797556e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 3,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 1198,
+              "elapsed_seconds": 0.07308633299544454,
+              "final_relative_residual": 4.7162971059587175e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 1240,
+              "elapsed_seconds": 0.07353149959817529,
+              "final_relative_residual": 9.760636175847423e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 2040,
+              "elapsed_seconds": 0.05007608374580741,
+              "final_relative_residual": 9.354736489470432e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 4,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 1076,
+              "elapsed_seconds": 0.06581404199823737,
+              "final_relative_residual": 9.384826232520627e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 1361,
+              "elapsed_seconds": 0.0761913750320673,
+              "final_relative_residual": 6.695942209645625e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 2340,
+              "elapsed_seconds": 0.057965082582086325,
+              "final_relative_residual": 8.73403456133313e-07
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "convdiff_n500_eps10",
+      "path": "/Users/tylerpellek/RL_Final/GMRES_RL/matrices/kappa_sweep_20_matrices/convdiff_n500_eps10.mtx",
+      "n": 500,
+      "nnz": 1498,
+      "condition_number": 50570.53121242708,
+      "per_rhs": [
+        {
+          "rhs_index": 0,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 1994,
+              "elapsed_seconds": 0.1261051674373448,
+              "final_relative_residual": 5.257843110615463e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 1934,
+              "elapsed_seconds": 0.1194559158757329,
+              "final_relative_residual": 7.950160237564756e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 4100,
+              "elapsed_seconds": 0.11668404191732407,
+              "final_relative_residual": 9.878003217684659e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 1,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 1853,
+              "elapsed_seconds": 0.11373895825818181,
+              "final_relative_residual": 4.818200075688274e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 2579,
+              "elapsed_seconds": 0.17145458329468966,
+              "final_relative_residual": 5.661507276274189e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 3800,
+              "elapsed_seconds": 0.09376450022682548,
+              "final_relative_residual": 9.55129276602454e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 2,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 1836,
+              "elapsed_seconds": 0.12193691730499268,
+              "final_relative_residual": 8.071201704514439e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 1808,
+              "elapsed_seconds": 0.1103943339549005,
+              "final_relative_residual": 8.818375182041431e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 5180,
+              "elapsed_seconds": 0.125856916885823,
+              "final_relative_residual": 8.787235046296516e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 3,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 2265,
+              "elapsed_seconds": 0.14992154203355312,
+              "final_relative_residual": 9.174180700600112e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 1947,
+              "elapsed_seconds": 0.12081750016659498,
+              "final_relative_residual": 9.671906660028986e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 3940,
+              "elapsed_seconds": 0.09625687496736646,
+              "final_relative_residual": 9.84136036365492e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 4,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 2372,
+              "elapsed_seconds": 0.15580004220828414,
+              "final_relative_residual": 9.596312279133122e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 2270,
+              "elapsed_seconds": 0.1431630002334714,
+              "final_relative_residual": 9.981310521675802e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 6280,
+              "elapsed_seconds": 0.15258074970915914,
+              "final_relative_residual": 9.804822404424023e-07
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "convdiff_n600_eps15",
+      "path": "/Users/tylerpellek/RL_Final/GMRES_RL/matrices/kappa_sweep_20_matrices/convdiff_n600_eps15.mtx",
+      "n": 600,
+      "nnz": 1798,
+      "condition_number": 94989.94310533056,
+      "per_rhs": [
+        {
+          "rhs_index": 0,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 2247,
+              "elapsed_seconds": 0.14964404189959168,
+              "final_relative_residual": 7.768315764517748e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 2703,
+              "elapsed_seconds": 0.1761177908629179,
+              "final_relative_residual": 6.062206113912036e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 6480,
+              "elapsed_seconds": 0.17083045933395624,
+              "final_relative_residual": 9.993235052191528e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 1,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 2998,
+              "elapsed_seconds": 0.20326295774430037,
+              "final_relative_residual": 6.134338839866631e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 2709,
+              "elapsed_seconds": 0.1827200842089951,
+              "final_relative_residual": 8.880522920038848e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 8500,
+              "elapsed_seconds": 0.22429045801982284,
+              "final_relative_residual": 9.499717639857073e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 2,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 2349,
+              "elapsed_seconds": 0.15931420819833875,
+              "final_relative_residual": 3.3337969502433165e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 4048,
+              "elapsed_seconds": 0.26761795906350017,
+              "final_relative_residual": 9.828225263520802e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 10580,
+              "elapsed_seconds": 0.27887912513688207,
+              "final_relative_residual": 9.974289834447484e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 3,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 2761,
+              "elapsed_seconds": 0.18033662484958768,
+              "final_relative_residual": 8.190434112447126e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 3160,
+              "elapsed_seconds": 0.2055680830962956,
+              "final_relative_residual": 6.595253676932928e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 8660,
+              "elapsed_seconds": 0.22909375000745058,
+              "final_relative_residual": 9.923566638668985e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 4,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 3040,
+              "elapsed_seconds": 0.20881037507206202,
+              "final_relative_residual": 6.382426400266438e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 2723,
+              "elapsed_seconds": 0.1778690000064671,
+              "final_relative_residual": 8.856225604118883e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 9080,
+              "elapsed_seconds": 0.24168620770797133,
+              "final_relative_residual": 9.997168623562886e-07
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "convdiff_n700_eps05",
+      "path": "/Users/tylerpellek/RL_Final/GMRES_RL/matrices/kappa_sweep_20_matrices/convdiff_n700_eps05.mtx",
+      "n": 700,
+      "nnz": 2098,
+      "condition_number": 56137.026437084394,
+      "per_rhs": [
+        {
+          "rhs_index": 0,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 2323,
+              "elapsed_seconds": 0.15855125011876225,
+              "final_relative_residual": 9.876300103876953e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 2254,
+              "elapsed_seconds": 0.14809645805507898,
+              "final_relative_residual": 9.489029197001399e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 5200,
+              "elapsed_seconds": 0.1489125406369567,
+              "final_relative_residual": 9.478748920999911e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 1,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 2428,
+              "elapsed_seconds": 0.163828041870147,
+              "final_relative_residual": 5.947617866022631e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 1888,
+              "elapsed_seconds": 0.12888154201209545,
+              "final_relative_residual": 8.321545065769067e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 4720,
+              "elapsed_seconds": 0.1336718751117587,
+              "final_relative_residual": 9.97166335446415e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 2,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 1853,
+              "elapsed_seconds": 0.1285020001232624,
+              "final_relative_residual": 3.3165077855069646e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 1890,
+              "elapsed_seconds": 0.12165712518617511,
+              "final_relative_residual": 9.977426134724448e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 3700,
+              "elapsed_seconds": 0.10552862519398332,
+              "final_relative_residual": 4.6037023143888184e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 3,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 2047,
+              "elapsed_seconds": 0.13511899998411536,
+              "final_relative_residual": 7.239004325198141e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 1937,
+              "elapsed_seconds": 0.12495499989017844,
+              "final_relative_residual": 9.095888297518858e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 4860,
+              "elapsed_seconds": 0.1365329590626061,
+              "final_relative_residual": 9.478708020822503e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 4,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 2248,
+              "elapsed_seconds": 0.15238774986937642,
+              "final_relative_residual": 9.823285075640186e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 1803,
+              "elapsed_seconds": 0.11563670774921775,
+              "final_relative_residual": 7.696237275816689e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 5700,
+              "elapsed_seconds": 0.16064487490803003,
+              "final_relative_residual": 9.393803777366547e-07
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "convdiff_n800_eps15",
+      "path": "/Users/tylerpellek/RL_Final/GMRES_RL/matrices/kappa_sweep_20_matrices/convdiff_n800_eps15.mtx",
+      "n": 800,
+      "nnz": 2398,
+      "condition_number": 168730.50597446505,
+      "per_rhs": [
+        {
+          "rhs_index": 0,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 3852,
+              "elapsed_seconds": 0.2809419999830425,
+              "final_relative_residual": 7.999535521340209e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 3220,
+              "elapsed_seconds": 0.23467004112899303,
+              "final_relative_residual": 4.7643186002280563e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 22360,
+              "elapsed_seconds": 0.6979396659880877,
+              "final_relative_residual": 9.906444903217447e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 1,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 3701,
+              "elapsed_seconds": 0.2678092918358743,
+              "final_relative_residual": 9.735917259017462e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 4134,
+              "elapsed_seconds": 0.3131600837223232,
+              "final_relative_residual": 9.265351275689252e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 24940,
+              "elapsed_seconds": 0.7763228751718998,
+              "final_relative_residual": 9.991244178029845e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 2,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 3790,
+              "elapsed_seconds": 0.28443891694769263,
+              "final_relative_residual": 5.569010026560194e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 3421,
+              "elapsed_seconds": 0.24532674998044968,
+              "final_relative_residual": 5.111562975913382e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 25120,
+              "elapsed_seconds": 0.7717242501676083,
+              "final_relative_residual": 9.92362251764942e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 3,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 3860,
+              "elapsed_seconds": 0.3004331667907536,
+              "final_relative_residual": 7.7822624935149e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 4285,
+              "elapsed_seconds": 0.3128619589842856,
+              "final_relative_residual": 9.925164863981617e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 13720,
+              "elapsed_seconds": 0.41954420879483223,
+              "final_relative_residual": 9.893598393877447e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 4,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 4168,
+              "elapsed_seconds": 0.2988604581914842,
+              "final_relative_residual": 9.48849106579888e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 5100,
+              "elapsed_seconds": 0.380711916834116,
+              "final_relative_residual": 2.5628168726061737e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 25060,
+              "elapsed_seconds": 0.7629623753018677,
+              "final_relative_residual": 9.938973949331004e-07
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "convdiff_n900_eps20",
+      "path": "/Users/tylerpellek/RL_Final/GMRES_RL/matrices/kappa_sweep_20_matrices/convdiff_n900_eps20.mtx",
+      "n": 900,
+      "nnz": 2698,
+      "condition_number": 246843.86522378237,
+      "per_rhs": [
+        {
+          "rhs_index": 0,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 4483,
+              "elapsed_seconds": 0.3775515826418996,
+              "final_relative_residual": 7.895671703614482e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 5547,
+              "elapsed_seconds": 0.4805585420690477,
+              "final_relative_residual": 3.6052766021202854e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 37280,
+              "elapsed_seconds": 1.4770697923377156,
+              "final_relative_residual": 9.944878644729273e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 1,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 5304,
+              "elapsed_seconds": 0.43782375007867813,
+              "final_relative_residual": 1.302383372320516e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 3465,
+              "elapsed_seconds": 0.29031004197895527,
+              "final_relative_residual": 9.73946272992021e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 29400,
+              "elapsed_seconds": 1.1819789172150195,
+              "final_relative_residual": 9.950697545258658e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 2,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 4213,
+              "elapsed_seconds": 0.35747120901942253,
+              "final_relative_residual": 9.583100481986782e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 4035,
+              "elapsed_seconds": 0.3400108329951763,
+              "final_relative_residual": 9.999478339233455e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 27860,
+              "elapsed_seconds": 1.1220028749667108,
+              "final_relative_residual": 9.942963537004e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 3,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 4573,
+              "elapsed_seconds": 0.40671341633424163,
+              "final_relative_residual": 8.622892752558421e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 3594,
+              "elapsed_seconds": 0.28317912528291345,
+              "final_relative_residual": 6.020864973059964e-07
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 22040,
+              "elapsed_seconds": 0.8717204169370234,
+              "final_relative_residual": 9.99984120163505e-07
+            }
+          ]
+        },
+        {
+          "rhs_index": 4,
+          "dqn_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 5181,
+              "elapsed_seconds": 0.441965542268008,
+              "final_relative_residual": 8.151467775093273e-07
+            },
+            {
+              "converged": true,
+              "total_arnoldi": 4020,
+              "elapsed_seconds": 0.3374946671538055,
+              "final_relative_residual": 4.4655556276743277e-08
+            }
+          ],
+          "gmres20_seeds": [
+            {
+              "converged": true,
+              "total_arnoldi": 32700,
+              "elapsed_seconds": 1.2929329578764737,
+              "final_relative_residual": 9.968771834613658e-07
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

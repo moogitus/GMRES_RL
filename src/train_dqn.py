@@ -10,8 +10,8 @@ Assumptions:
 
 Run:
     python train_dqn.py
-    python train_dqn.py --matrix-names e20r0000
-    python train_dqn.py --matrices-dir matrices
+    python train_dqn.py --matrices-dir matrices/test
+    python train_dqn.py --matrices-dir matrices/test --matrix-names 1138_bus ct20stif
 """
 
 import argparse
@@ -30,46 +30,6 @@ from stable_baselines3 import DQN
 from stable_baselines3.common.callbacks import BaseCallback
 
 from env import GMRESEnv
-
-
-PAPER_COLLECTION = [
-    {"name": "watt_1"},
-    {"name": "steam2"},
-    {"name": "fs_183_4"},
-    {"name": "fs_183_6"},
-    {"name": "cage6"},
-    {"name": "steam3"},
-    {"name": "pivtol"},
-    {"name": "cage5"},
-    {"name": "fs_183_3"},
-    {"name": "pores_1"},
-    {"name": "rajat11"},
-    {"name": "bfwa62"},
-    {"name": "circuit_2"},
-    {"name": "orsreg_1"},
-    {"name": "orsirr_1"},
-    {"name": "sherman4"},
-    {"name": "wang2"},
-    {"name": "pde2961"},
-    {"name": "bwm200"},
-    {"name": "cfd1"},
-    {"name": "lns_131"},
-    {"name": "tub100"},
-    {"name": "gre_115"},
-    {"name": "gre_185"},
-    {"name": "lop163"},
-    {"name": "odepa400"},
-    {"name": "olm100"},
-    {"name": "rdb200"},
-    {"name": "saylr1"},
-    {"name": "young3c"},
-    {"name": "1138_bus"},
-    {"name": "finance256"},
-    {"name": "ct20stif"},
-    {"name": "olesnik0"},
-    {"name": "ex19"},
-    {"name": "crankseg_1"},
-]
 
 
 def _largest_matrix_member(tar: tarfile.TarFile):
@@ -127,6 +87,36 @@ def _recursive_candidates(root: Path, patterns):
                 seen.add(resolved)
                 candidates.append(path)
     return candidates
+
+
+def _strip_matrix_suffix(name: str) -> str:
+    for suffix in (".tar.gz", ".tgz", ".mtx.gz", ".mtx"):
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
+def discover_matrix_names(matrices_dir: Path) -> list[str]:
+    matrices_dir = matrices_dir.expanduser().resolve()
+    if not matrices_dir.exists():
+        raise FileNotFoundError(
+            f"Matrix directory not found: {matrices_dir}. "
+            "Expected a local folder containing matrix archives or Matrix Market files."
+        )
+
+    names = set()
+    for pattern in ("*.tar.gz", "*.tgz", "*.mtx", "*.mtx.gz"):
+        for path in matrices_dir.rglob(pattern):
+            name = _strip_matrix_suffix(path.name)
+            if name.endswith("_rhs1") or name.endswith("_b"):
+                continue
+            names.add(name)
+
+    if not names:
+        raise FileNotFoundError(
+            f"No matrix archives or Matrix Market files found under {matrices_dir}."
+        )
+    return sorted(names)
 
 
 def _find_local_archive(name: str, matrices_dir: Path):
@@ -304,7 +294,7 @@ def summarise_runs(runs):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--matrices-dir", type=str, default="matrices")
+    parser.add_argument("--matrices-dir", type=str, default="matrices/test")
     parser.add_argument("--matrix-names", nargs="+", default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--m-max", type=int, default=20)
@@ -327,16 +317,16 @@ def main():
     parser.add_argument("--out", type=str, default="logs/train_dqn_collection.json")
     args = parser.parse_args()
 
-    configs = PAPER_COLLECTION
+    matrices_root = Path(args.matrices_dir)
     if args.matrix_names is not None:
-        wanted = set(args.matrix_names)
-        configs = [cfg for cfg in configs if cfg["name"] in wanted]
+        configs = [{"name": name} for name in args.matrix_names]
+    else:
+        configs = [{"name": name} for name in discover_matrix_names(matrices_root)]
     if args.limit is not None:
         configs = configs[:args.limit]
     if not configs:
         raise ValueError("No matrices selected.")
 
-    matrices_root = Path(args.matrices_dir)
     results = {}
 
     print(f"Selected {len(configs)} matrices.")

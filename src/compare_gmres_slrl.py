@@ -1,13 +1,14 @@
 """
 compare_gmres_slrl.py
 
-Run DQN, SAC, and fixed GMRES(20) on a six-matrix hard benchmark, then
-generate paper-style comparison plots for:
-  - total Arnoldi steps
-  - wall-clock time
+Run DQN, SAC, and fixed GMRES(20) on a six-matrix hard benchmark and generate
+per-matrix convergence plots with:
+  - y-axis: relative residual norm
+  - x-axis: cumulative Arnoldi steps or wall-clock time
 
 The benchmark always uses the consistent RHS b = A @ 1.
 """
+
 import argparse
 import json
 import time
@@ -16,11 +17,14 @@ from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
+from scipy.sparse import csr_matrix
+from stable_baselines3 import DQN, SAC
+from stable_baselines3.common.callbacks import BaseCallback
 
+from control_env import AKSLRLEnv
 from env import GMRESEnv
 from train_dqn import load_problem as load_dqn_problem
-from train_dqn import run_dqn
-from train_sac import run_sac
 
 
 MATRIX_ORDER = [
@@ -74,9 +78,190 @@ def _sac_args(args, b_norm: float) -> SimpleNamespace:
     )
 
 
-def run_fixed_gmres20(A, b, args) -> dict:
+class _TraceOnDone(BaseCallback):
+    """Capture a full convergence trace and stop learning once the solve ends."""
+
+    def __init__(self, b_norm: float, relative_from_info: bool):
+        super().__init__()
+        self.b_norm = max(float(b_norm), 1e-12)
+        self.relative_from_info = bool(relative_from_info)
+        self._done = False
+        self._t0 = None
+        self.residual_norms: list[float] = []
+        self.relative_residuals: list[float] = []
+        self.ms: list[int] = []
+        self.step_times: list[float] = []
+
+    def start_timer(self) -> None:
+        self._t0 = time.perf_counter()
+
+    def _on_step(self) -> bool:
+        if self._t0 is None:
+            self.start_timer()
+        now = time.perf_counter() - self._t0
+        for info, done in zip(
+            self.locals.get("infos", []),
+            self.locals.get("dones", [False]),
+        ):
+            residual_norm = float(info.get("residual_norm", np.nan))
+            self.residual_norms.append(residual_norm)
+            if self.relative_from_info and "relative_residual_norm" in info:
+                rel = float(info["relative_residual_norm"])
+            else:
+                rel = residual_norm / self.b_norm
+            self.relative_residuals.append(rel)
+            self.ms.append(int(info.get("current_m", 0)))
+            self.step_times.append(float(now))
+            if done:
+                self._done = True
+        return not self._done
+
+
+def _trace_payload(
+    initial_relative_residual: float,
+    initial_residual_norm: float,
+    logger: _TraceOnDone,
+) -> dict:
+    ms = np.asarray(logger.ms, dtype=np.int64)
+    arnoldi = np.concatenate([[0], np.cumsum(ms, dtype=np.int64)])
+    wallclock = np.concatenate([[0.0], np.asarray(logger.step_times, dtype=np.float64)])
+    residual_norm = np.concatenate([[initial_residual_norm], np.asarray(logger.residual_norms, dtype=np.float64)])
+    relative_residual = np.concatenate(
+        [[initial_relative_residual], np.asarray(logger.relative_residuals, dtype=np.float64)]
+    )
+    return {
+        "arnoldi_steps": arnoldi.astype(np.int64).tolist(),
+        "wallclock_seconds": wallclock.astype(np.float64).tolist(),
+        "residual_norm": residual_norm.astype(np.float64).tolist(),
+        "relative_residual_norm": relative_residual.astype(np.float64).tolist(),
+    }
+
+
+def run_dqn_trace(A, b, args, seed: int) -> dict:
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
     env = GMRESEnv(
         A=A,
+        b=b,
+        m_max=args.m_max,
+        tolerance=args.tolerance,
+        max_cycles=args.max_cycles,
+        history_length=args.history_length,
+        lambda_work=args.lambda_work,
+        gamma_shape=args.gamma,
+        convergence_bonus=args.convergence_bonus,
+    )
+    _, reset_info = env.reset(seed=seed)
+
+    model = DQN(
+        policy="MlpPolicy",
+        env=env,
+        learning_rate=args.learning_rate,
+        buffer_size=args.buffer_size,
+        learning_starts=args.learning_starts,
+        batch_size=args.batch_size,
+        gamma=args.gamma,
+        train_freq=1,
+        gradient_steps=1,
+        target_update_interval=args.target_update_interval,
+        exploration_fraction=args.exploration_fraction,
+        exploration_initial_eps=1.0,
+        exploration_final_eps=args.exploration_final_eps,
+        policy_kwargs={"net_arch": [128, 128]},
+        verbose=0,
+        seed=seed,
+        device=args.device,
+    )
+
+    logger = _TraceOnDone(b_norm=np.linalg.norm(b), relative_from_info=True)
+    logger.start_timer()
+    model.learn(total_timesteps=args.max_cycles, callback=logger, progress_bar=False)
+
+    trace = _trace_payload(
+        initial_relative_residual=float(reset_info["relative_residual_norm"]),
+        initial_residual_norm=float(reset_info["residual_norm"]),
+        logger=logger,
+    )
+    final_rel = trace["relative_residual_norm"][-1]
+    return {
+        "converged": bool(final_rel < args.tolerance),
+        "cycles_to_tol": max(0, len(trace["arnoldi_steps"]) - 1),
+        "total_arnoldi": int(trace["arnoldi_steps"][-1]),
+        "elapsed_seconds": float(trace["wallclock_seconds"][-1]),
+        "final_residual_norm": float(trace["residual_norm"][-1]),
+        "final_relative_residual_norm": float(final_rel),
+        "trace": trace,
+    }
+
+
+def run_sac_trace(A, b, args, seed: int) -> dict:
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    env = AKSLRLEnv(
+        A=A,
+        b=b,
+        m_max=args.m_max,
+        tolerance=args.tolerance,
+        max_cycles=args.max_cycles,
+        cte=args.cte,
+        convergence_bonus=args.convergence_bonus,
+        include_log_residual_in_state=args.include_log_residual,
+    )
+    _, reset_info = env.reset(seed=seed)
+
+    if args.buffer_size is None:
+        buffer_size = int(min(max(A.shape[0] // 2, 1), 20_000))
+    else:
+        buffer_size = int(args.buffer_size)
+
+    model = SAC(
+        policy="MlpPolicy",
+        env=env,
+        learning_rate=args.learning_rate,
+        buffer_size=buffer_size,
+        learning_starts=args.learning_starts,
+        batch_size=args.batch_size,
+        gamma=args.gamma,
+        tau=args.tau,
+        train_freq=1,
+        gradient_steps=1,
+        ent_coef=args.ent_coef,
+        target_update_interval=args.target_update_interval,
+        policy_kwargs={"net_arch": list(args.net_arch)},
+        verbose=0,
+        seed=seed,
+        device=args.device,
+    )
+
+    logger = _TraceOnDone(b_norm=np.linalg.norm(b), relative_from_info=False)
+    logger.start_timer()
+    model.learn(total_timesteps=args.max_cycles, callback=logger, progress_bar=False)
+
+    initial_residual_norm = float(reset_info["residual_norm"])
+    initial_relative = initial_residual_norm / max(float(np.linalg.norm(b)), 1e-12)
+    trace = _trace_payload(
+        initial_relative_residual=initial_relative,
+        initial_residual_norm=initial_residual_norm,
+        logger=logger,
+    )
+    final_rel = trace["relative_residual_norm"][-1]
+    return {
+        "converged": bool(final_rel < args.relative_tolerance),
+        "cycles_to_tol": max(0, len(trace["arnoldi_steps"]) - 1),
+        "total_arnoldi": int(trace["arnoldi_steps"][-1]),
+        "elapsed_seconds": float(trace["wallclock_seconds"][-1]),
+        "final_residual_norm": float(trace["residual_norm"][-1]),
+        "final_relative_residual_norm": float(final_rel),
+        "buffer_size": buffer_size,
+        "trace": trace,
+    }
+
+
+def run_fixed_gmres20_trace(A, b, args) -> dict:
+    env = GMRESEnv(
+        A=csr_matrix(A),
         b=b,
         m_max=args.m_max,
         tolerance=args.tolerance,
@@ -86,80 +271,95 @@ def run_fixed_gmres20(A, b, args) -> dict:
         gamma_shape=1.0,
         convergence_bonus=0.0,
     )
-    _, info = env.reset()
+    _, reset_info = env.reset()
+    arnoldi = [0]
+    wallclock = [0.0]
+    residual_norm = [float(reset_info["residual_norm"])]
+    relative_residual = [float(reset_info["relative_residual_norm"])]
     t0 = time.perf_counter()
+
     while True:
         _, _, terminated, truncated, info = env.step(19)
+        arnoldi.append(int(info["total_arnoldi"]))
+        wallclock.append(float(time.perf_counter() - t0))
+        residual_norm.append(float(info["residual_norm"]))
+        relative_residual.append(float(info["relative_residual_norm"]))
         if terminated or truncated:
             break
-    elapsed = time.perf_counter() - t0
+
     return {
-        "converged": bool(terminated),
+        "converged": bool(relative_residual[-1] < args.tolerance),
         "cycles_to_tol": int(info["cycle_count"]),
-        "total_arnoldi": int(info["total_arnoldi"]),
-        "mean_m": 20.0,
-        "elapsed_seconds": float(elapsed),
-        "final_residual_norm": float(info["residual_norm"]),
-        "final_relative_residual_norm": float(info["relative_residual_norm"]),
+        "total_arnoldi": int(arnoldi[-1]),
+        "elapsed_seconds": float(wallclock[-1]),
+        "final_residual_norm": float(residual_norm[-1]),
+        "final_relative_residual_norm": float(relative_residual[-1]),
+        "trace": {
+            "arnoldi_steps": arnoldi,
+            "wallclock_seconds": wallclock,
+            "residual_norm": residual_norm,
+            "relative_residual_norm": relative_residual,
+        },
     }
 
 
-def _summarize_runs(runs: list[dict]) -> dict:
-    def _avg(key: str) -> float:
-        return float(np.mean([run[key] for run in runs]))
+def _resample_traces(runs: list[dict], x_key: str, num_points: int = 250) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    x_max = max(float(run["trace"][x_key][-1]) for run in runs)
+    if x_max <= 0:
+        x_grid = np.linspace(0.0, 1.0, num_points)
+    else:
+        x_grid = np.linspace(0.0, x_max, num_points)
 
-    def _std(key: str) -> float:
-        return float(np.std([run[key] for run in runs]))
+    curves = []
+    for run in runs:
+        xs = np.asarray(run["trace"][x_key], dtype=np.float64)
+        ys = np.asarray(run["trace"]["relative_residual_norm"], dtype=np.float64)
+        ys = np.maximum(ys, 1e-16)
+        log_ys = np.log10(ys)
+        interp = np.interp(x_grid, xs, log_ys, left=log_ys[0], right=log_ys[-1])
+        curves.append(10.0 ** interp)
 
-    return {
-        "convergence_rate": _avg("converged"),
-        "arnoldi_mean": _avg("total_arnoldi"),
-        "arnoldi_std": _std("total_arnoldi"),
-        "time_mean": _avg("elapsed_seconds"),
-        "time_std": _std("elapsed_seconds"),
-        "cycles_mean": _avg("cycles_to_tol"),
-        "final_residual_norm_mean": _avg("final_residual_norm"),
-        "final_relative_residual_norm_mean": _avg("final_relative_residual_norm"),
-    }
+    curve_array = np.asarray(curves, dtype=np.float64)
+    return x_grid, curve_array.mean(axis=0), curve_array.std(axis=0)
 
 
-def _plot_metric(payload: dict, out_path: Path, metric_key: str, ylabel: str, title_suffix: str) -> None:
-    labels = [row["name"] for row in payload["results"]]
-    x = np.arange(len(labels))
-
-    series = {
-        "DQN": np.array([row["methods"]["dqn"]["summary"][metric_key] for row in payload["results"]], dtype=np.float64),
-        "SAC": np.array([row["methods"]["sac"]["summary"][metric_key] for row in payload["results"]], dtype=np.float64),
-        "GMRES(20)": np.array([row["methods"]["gmres20"]["summary"][metric_key] for row in payload["results"]], dtype=np.float64),
-    }
+def _plot_matrix_curve(matrix_row: dict, metric: str, out_path: Path) -> None:
+    metric_label = {
+        "arnoldi_steps": "Arnoldi steps",
+        "wallclock_seconds": "Wall-clock time (s)",
+    }[metric]
     colors = {
-        "DQN": "#C0504D",
-        "SAC": "#4F81BD",
-        "GMRES(20)": "#4BACC6",
+        "dqn": "#C0504D",
+        "sac": "#4F81BD",
+        "gmres20": "#4BACC6",
     }
-    markers = {
-        "DQN": "^",
-        "SAC": "o",
-        "GMRES(20)": "s",
+    labels = {
+        "dqn": "DQN",
+        "sac": "SAC",
+        "gmres20": "GMRES(20)",
     }
 
     plt.style.use("seaborn-v0_8-whitegrid")
-    fig, ax = plt.subplots(figsize=(13, 7), constrained_layout=True)
-    for label, values in series.items():
-        ax.plot(x, values, linewidth=3, marker=markers[label], markersize=7, label=label, color=colors[label])
+    fig, ax = plt.subplots(figsize=(9.5, 6.0), constrained_layout=True)
 
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=25, ha="right", fontsize=11)
-    ax.set_xlabel("matrix", fontsize=14, fontweight="bold")
-    ax.set_ylabel(ylabel, fontsize=14, fontweight="bold")
+    for method_key in ("dqn", "sac", "gmres20"):
+        runs = matrix_row["methods"][method_key]["runs"]
+        x_grid, mean_curve, std_curve = _resample_traces(runs, metric)
+        ax.plot(x_grid, mean_curve, linewidth=2.8, color=colors[method_key], label=labels[method_key])
+        if len(runs) > 1:
+            lower = np.maximum(mean_curve - std_curve, 1e-16)
+            upper = np.maximum(mean_curve + std_curve, 1e-16)
+            ax.fill_between(x_grid, lower, upper, color=colors[method_key], alpha=0.18)
+
+    ax.set_xlabel(metric_label, fontsize=13, fontweight="bold")
+    ax.set_ylabel("Relative residual norm", fontsize=13, fontweight="bold")
     ax.set_yscale("log")
-    ax.legend(loc="upper left", frameon=False, fontsize=12)
-    ax.grid(True, axis="y", color="#999999", alpha=0.6, linewidth=1)
-    ax.grid(False, axis="x")
+    ax.legend(loc="upper right", frameon=False, fontsize=11)
+    ax.grid(True, which="major", axis="both", color="#B0B0B0", alpha=0.5)
     ax.set_title(
-        "Six-matrix hard benchmark: DQN vs SAC vs GMRES(20)\n"
-        f"{title_suffix}",
-        fontsize=14,
+        f"{matrix_row['name']}: convergence vs {metric_label.lower()}\n"
+        f"means over {matrix_row['num_seeds']} seed(s) for DQN/SAC",
+        fontsize=13,
     )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -170,12 +370,20 @@ def _plot_metric(payload: dict, out_path: Path, metric_key: str, ylabel: str, ti
 def parse_args() -> argparse.Namespace:
     repo_root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser()
-    parser.add_argument("--matrices-dir", type=str, default=str(repo_root / "matrices"))
+    parser.add_argument(
+        "--matrices-dir",
+        type=str,
+        default=str(repo_root / "matrices" / "six_matrix_benchmark"),
+    )
+    parser.add_argument(
+        "--matrix-names",
+        nargs="+",
+        default=MATRIX_ORDER,
+    )
     parser.add_argument("--tolerance", type=float, default=1e-6,
-                        help="Relative residual tolerance used for DQN and GMRES(20). "
-                             "SAC receives the matrix-specific absolute equivalent.")
+                        help="Relative residual tolerance target.")
     parser.add_argument("--max-cycles", type=int, default=10000)
-    parser.add_argument("--num-seeds", type=int, default=1)
+    parser.add_argument("--num-seeds", type=int, default=5)
     parser.add_argument("--base-seed", type=int, default=0)
     parser.add_argument("--m-max", type=int, default=20)
     parser.add_argument("--device", type=str, default="cpu")
@@ -206,9 +414,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sac-include-log-residual", action="store_true", default=True)
     parser.add_argument("--no-sac-log-residual", dest="sac_include_log_residual", action="store_false")
 
-    parser.add_argument("--out-json", type=str, default=str(repo_root / "src" / "logs" / "six_matrix_rl_comparison.json"))
-    parser.add_argument("--out-arnoldi", type=str, default=str(repo_root / "src" / "logs" / "six_matrix_rl_comparison_arnoldi.png"))
-    parser.add_argument("--out-wallclock", type=str, default=str(repo_root / "src" / "logs" / "six_matrix_rl_comparison_wallclock.png"))
+    parser.add_argument(
+        "--out-json",
+        type=str,
+        default=str(repo_root / "src" / "logs" / "six_matrix_convergence.json"),
+    )
+    parser.add_argument(
+        "--out-dir-arnoldi",
+        type=str,
+        default=str(repo_root / "src" / "logs" / "six_matrix_convergence_arnoldi"),
+    )
+    parser.add_argument(
+        "--out-dir-wallclock",
+        type=str,
+        default=str(repo_root / "src" / "logs" / "six_matrix_convergence_wallclock"),
+    )
     return parser.parse_args()
 
 
@@ -220,50 +440,59 @@ def main() -> None:
         pass
 
     matrices_root = Path(args.matrices_dir).expanduser().resolve()
+    selected_names = [name for name in MATRIX_ORDER if name in set(args.matrix_names)]
+    if not selected_names:
+        raise ValueError("No matrices selected.")
+
     dqn_args = _dqn_args(args)
+    arnoldi_dir = Path(args.out_dir_arnoldi)
+    wallclock_dir = Path(args.out_dir_wallclock)
 
     rows = []
-    for idx, name in enumerate(MATRIX_ORDER, start=1):
+    for idx, name in enumerate(selected_names, start=1):
         print(f"\n{'=' * 72}")
-        print(f"[{idx}/{len(MATRIX_ORDER)}] {name}")
+        print(f"[{idx}/{len(selected_names)}] {name}")
         print(f"{'=' * 72}")
         A, b = load_dqn_problem({"name": name}, matrices_root)
         b_norm = float(np.linalg.norm(b))
         print(f"n={A.shape[0]}, nnz={A.nnz}, ||b||={b_norm:.3e}")
 
-        gmres_runs = []
+        gmres_run = run_fixed_gmres20_trace(A, b, args)
         dqn_runs = []
         sac_runs = []
         for offset in range(args.num_seeds):
             seed = args.base_seed + offset
-            gmres_run = run_fixed_gmres20(A, b, args)
-            dqn_run = run_dqn(A, b, dqn_args, seed)
-            sac_run = run_sac(A, b, _sac_args(args, b_norm), seed)
-            gmres_runs.append(gmres_run)
+            dqn_run = run_dqn_trace(A, b, dqn_args, seed)
+            sac_args = _sac_args(args, b_norm)
+            sac_args.relative_tolerance = args.tolerance
+            sac_run = run_sac_trace(A, b, sac_args, seed)
             dqn_runs.append(dqn_run)
             sac_runs.append(sac_run)
             print(
                 f"  seed={seed:02d}  "
-                f"GMRES20 arnoldi={gmres_run['total_arnoldi']:7d} time={gmres_run['elapsed_seconds']:8.2f}s  "
                 f"DQN arnoldi={dqn_run['total_arnoldi']:7d} time={dqn_run['elapsed_seconds']:8.2f}s  "
                 f"SAC arnoldi={sac_run['total_arnoldi']:7d} time={sac_run['elapsed_seconds']:8.2f}s"
             )
 
-        rows.append({
+        matrix_row = {
             "name": name,
             "shape": [int(A.shape[0]), int(A.shape[1])],
             "nnz": int(A.nnz),
             "b_norm": b_norm,
+            "num_seeds": int(args.num_seeds),
             "methods": {
-                "gmres20": {"runs": gmres_runs, "summary": _summarize_runs(gmres_runs)},
-                "dqn": {"runs": dqn_runs, "summary": _summarize_runs(dqn_runs)},
-                "sac": {"runs": sac_runs, "summary": _summarize_runs(sac_runs)},
+                "gmres20": {"runs": [gmres_run]},
+                "dqn": {"runs": dqn_runs},
+                "sac": {"runs": sac_runs},
             },
-        })
+        }
+        rows.append(matrix_row)
+        _plot_matrix_curve(matrix_row, "arnoldi_steps", arnoldi_dir / f"{name}.png")
+        _plot_matrix_curve(matrix_row, "wallclock_seconds", wallclock_dir / f"{name}.png")
 
     payload = {
         "meta": {
-            "matrix_order": MATRIX_ORDER,
+            "matrix_order": selected_names,
             "matrices_dir": str(matrices_root),
             "tolerance_relative": args.tolerance,
             "max_cycles": args.max_cycles,
@@ -288,6 +517,7 @@ def main() -> None:
             },
             "notes": [
                 "All methods use the consistent RHS b = A @ 1.",
+                "Plots are per-matrix convergence traces with relative residual norm on the y-axis.",
                 "DQN and GMRES(20) terminate on relative residual tolerance.",
                 "SAC uses the implemented absolute-residual environment with tolerance scaled by ||b|| to match the relative target.",
             ],
@@ -298,25 +528,9 @@ def main() -> None:
     out_json = Path(args.out_json)
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(payload, indent=2))
-
-    _plot_metric(
-        payload,
-        Path(args.out_arnoldi),
-        metric_key="arnoldi_mean",
-        ylabel="total Arnoldi steps (log scale)",
-        title_suffix=f"relative tol={args.tolerance:.0e}, max_cycles={args.max_cycles}",
-    )
-    _plot_metric(
-        payload,
-        Path(args.out_wallclock),
-        metric_key="time_mean",
-        ylabel="wall-clock time in seconds (log scale)",
-        title_suffix=f"relative tol={args.tolerance:.0e}, max_cycles={args.max_cycles}",
-    )
-
-    print(f"\nSaved results to {out_json}")
-    print(f"Saved Arnoldi plot to {args.out_arnoldi}")
-    print(f"Saved wall-clock plot to {args.out_wallclock}")
+    print(f"\nSaved trace log to {out_json}")
+    print(f"Saved Arnoldi plots to {arnoldi_dir}")
+    print(f"Saved wall-clock plots to {wallclock_dir}")
 
 
 if __name__ == "__main__":

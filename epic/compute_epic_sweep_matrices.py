@@ -471,9 +471,7 @@ def main() -> None:
     matrices_dir = Path(args.matrices_dir)
     matrix_names = args.matrix_names if args.matrix_names else SWEEP_MATRIX_NAMES
 
-    # -----------------------------------------------------------------------
-    # 1. Collect transitions from sweep matrices
-    # -----------------------------------------------------------------------
+   # collect transitions from the sweep matrices
     print(
         f"Collecting transitions from {len(matrix_names)} sweep matrices\n"
         f"  matrices_dir  = {matrices_dir}\n"
@@ -517,23 +515,21 @@ def main() -> None:
     if args.save_transitions:
         save_transitions_csv(transitions, args.save_transitions)
 
-    # -----------------------------------------------------------------------
-    # 2. Build eval arrays
-    # -----------------------------------------------------------------------
+    # build eval arrays
     eval_prev = np.array([t.prev_norm for t in transitions], dtype=np.float64)
     eval_ms   = np.array([t.m         for t in transitions], dtype=np.int64)
     eval_curr = np.array([t.curr_norm for t in transitions], dtype=np.float64)
 
-    # State distribution D_S: pool of all observed residual norms.
+    # state distribution D_S: pool of all observed residual norms.
     all_norms = np.concatenate([eval_prev, eval_curr])
 
-    # Action distribution D_A
+    # action distribution D_A
     if args.action_dist == "empirical":
         action_pool = eval_ms.astype(np.int64)
     else:  # uniform over 1..m_max
         action_pool = rng.integers(1, args.m_max + 1, size=len(eval_ms))
 
-    # Sub-sample for canonicalization; S and S' are drawn *independently*.
+    # sub-sample for canonicalization; S and S' are drawn independently 
     K = min(args.num_canon_samples, len(all_norms), len(action_pool))
 
     S_samples      = all_norms[rng.choice(len(all_norms),   size=K, replace=True)]
@@ -543,9 +539,7 @@ def main() -> None:
     print(f"\nCanonicalizing {len(REWARD_REGISTRY)} reward functions "
           f"with K={K} independent samples per transition ...")
 
-    # -----------------------------------------------------------------------
-    # 3. Canonicalize all reward functions
-    # -----------------------------------------------------------------------
+    # compute canonicalized reward vectors for each reward function
     names = list(REWARD_REGISTRY.keys())
     canonical: dict[str, np.ndarray] = {}
 
@@ -564,9 +558,7 @@ def main() -> None:
         )
         print("done")
 
-    # -----------------------------------------------------------------------
-    # 4. EPIC distance matrix
-    # -----------------------------------------------------------------------
+   # compute EPIC distance matrix
     print("\nComputing EPIC distance matrix ...")
     n_r = len(names)
     dist_matrix = np.full((n_r, n_r), 0.0)
@@ -591,7 +583,7 @@ def main() -> None:
     print_distance_matrix(names, dist_matrix)
     print_interpretation(names, dist_matrix)
 
-    # Cross-reference convdiff results for the key pairs.
+    # cross-reference convdiff results for the key pairs
     print("\n=== Comparison with convdiff baseline ===")
     idx = {n: i for i, n in enumerate(names)}
 
@@ -612,9 +604,7 @@ def main() -> None:
     print(f"    [with convergence bonus B={args.convergence_bonus:.0f}]")
     print(f"    [convdiff reference B=9:   0.399874 (bootstrap CI ≈ [0.353, 0.452])]")
 
-    # -----------------------------------------------------------------------
-    # 5. Save outputs
-    # -----------------------------------------------------------------------
+    # save outputs
     print("\nSaving outputs ...")
     save_distance_matrix_csv(names, dist_matrix, args.out_matrix)
 

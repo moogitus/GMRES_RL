@@ -295,7 +295,6 @@ def collect_transitions(
                     m_max=m_max,
                     tolerance=tolerance,
                     max_cycles=max_cycles,
-                    reward_type="pbrs",     # valid in src/env.py; rewards recomputed below
                     convergence_bonus=0.0,
                 )
                 obs, info = env.reset()
@@ -332,7 +331,6 @@ def collect_transitions(
                         m_max=m_max,
                         tolerance=tolerance,
                         max_cycles=max_cycles,
-                        reward_type="pbrs",
                         convergence_bonus=0.0,
                     )
                     obs, info = env.reset()

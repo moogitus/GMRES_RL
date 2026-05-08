@@ -1,7 +1,7 @@
 """
 Variance and tail-event statistics over the §4.2 / §7.7 benchmark JSON.
 Backs the seed-std, p90 Arnoldi, cap-hit, and CV figures quoted in
-Tables 3 and 4. Streams the (potentially 800 MB) full_run.json via ijson
+Tables 3 and 4. Streams the full_run.json via ijson
 so peak RAM stays well under 100 MB.
 
 Compares two stochastic restart-selection methods (deterministic

@@ -21,9 +21,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-# pandas 2.x removed the legacy 'klass'-first signature of deprecate_kwarg
-# that older rliable releases call into; back-fill a compatibility shim
-# so the rliable import below succeeds on modern pandas
 try:
     from pandas.util import _decorators as _pd_decorators
 except ImportError:  # pragma: no cover

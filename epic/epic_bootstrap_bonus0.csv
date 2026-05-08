@@ -1,0 +1,16 @@
+pair,point_estimate,boot_mean,boot_std,ci_lo_2.5,ci_hi_97.5
+original vs shaped_terminal_corrected,0.722893,0.721945,0.008688,0.704526,0.736329
+original vs naive_log_shaped,0.722893,0.720823,0.009600,0.702228,0.738264
+original vs base_work,0.722893,0.722312,0.008679,0.705296,0.738292
+original vs ref_linear,0.722893,0.722294,0.008907,0.704495,0.739344
+original vs ref_quadratic,0.722279,0.721489,0.008977,0.703736,0.737340
+shaped_terminal_corrected vs naive_log_shaped,0.000000,0.000000,0.000000,0.000000,0.000000
+shaped_terminal_corrected vs base_work,0.000000,0.000000,0.000000,0.000000,0.000000
+shaped_terminal_corrected vs ref_linear,0.000000,0.000000,0.000000,0.000000,0.000000
+shaped_terminal_corrected vs ref_quadratic,0.099887,0.100005,0.002026,0.096441,0.104585
+naive_log_shaped vs base_work,0.000000,0.000000,0.000000,0.000000,0.000000
+naive_log_shaped vs ref_linear,0.000000,0.000000,0.000000,0.000000,0.000000
+naive_log_shaped vs ref_quadratic,0.099887,0.100001,0.002092,0.095949,0.104890
+base_work vs ref_linear,0.000000,0.000000,0.000000,0.000000,0.000000
+base_work vs ref_quadratic,0.099887,0.099589,0.001791,0.096053,0.102634
+ref_linear vs ref_quadratic,0.099887,0.099563,0.001922,0.096511,0.103379

@@ -1,5 +1,12 @@
 """
-Analyze benchmark JSON emitted by analysis/benchmark.py with rliable.
+rliable analysis of the §4.2 / §7.7 benchmark JSON. Computes IQM speedups,
+probability-of-improvement, performance profiles, and success rates,
+and writes the rliable_summary.json + PNGs that back Tables 3, 4 and
+Figure 7.
+
+Reference for the rliable framework: Agarwal et al., "Deep Reinforcement
+Learning at the Edge of the Statistical Precipice", NeurIPS 2021
+(https://github.com/google-research/rliable).
 """
 
 from __future__ import annotations
@@ -14,6 +21,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+# pandas 2.x removed the legacy 'klass'-first signature of deprecate_kwarg
+# that older rliable releases call into; back-fill a compatibility shim
+# so the rliable import below succeeds on modern pandas
 try:
     from pandas.util import _decorators as _pd_decorators
 except ImportError:  # pragma: no cover
@@ -50,7 +60,7 @@ def parse_args():
     parser.add_argument(
         "--input",
         type=str,
-        default="logs/peairs_style_159_suite.json",
+        default="results/peairs_155/full_run.json",
     )
     parser.add_argument(
         "--baseline",
@@ -70,12 +80,12 @@ def parse_args():
     parser.add_argument(
         "--out-json",
         type=str,
-        default="logs/peairs_style_159_rliable_summary.json",
+        default="results/peairs_155/rliable_summary.json",
     )
     parser.add_argument(
         "--out-dir",
         type=str,
-        default="logs/peairs_style_159_rliable",
+        default="results/peairs_155/rliable",
     )
     return parser.parse_args()
 

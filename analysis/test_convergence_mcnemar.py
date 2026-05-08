@@ -1,38 +1,24 @@
 """
-analysis/test_convergence_mcnemar.py
+McNemar's test on per-cell convergence outcomes (§4.2.1, §7.6 / Table 7).
+Each (matrix, seed) cell is one matched pair, so the appropriate test for
+the binary outcome "converged at relative residual ≤ τ within the Arnoldi
+cap" is McNemar's exact binomial test on the paired 2×2 table. We also
+report the continuity-corrected asymptotic chi-squared p-value, the
+marginal rates, the rate difference, and the Newcombe (1998) hybrid Wilson
+95% CI on the difference.
 
-Tests whether the per-cell convergence rates of two restart-selection
-methods differ under matched-pair structure. Each (matrix, seed) cell is
-the same linear system seen by both methods, so the appropriate test for
-the binary outcome ``converged at relative residual <= 1e-6 within the
-Arnoldi cap`` is McNemar's test on the paired 2x2 contingency table.
+Reads per_cell_runs.csv from analysis/compute_variance_statistics.py and
+writes mcnemar_convergence.csv (one row per scalar with id, description,
+value, and interpretation).
 
-H0: the two methods are equally likely to flip a discordant pair, i.e.,
-        P(method_A converges and method_B does not)
-    =   P(method_B converges and method_A does not).
+Reference for the paired CI:
+  Newcombe, R.G. (1998). Improved confidence intervals for the difference
+  between binomial proportions based on paired data. Statistics in Medicine,
+  17(22), 2635-2650.
 
-Under H0, the discordant pairs follow a Binomial(n_disc, 0.5)
-distribution. The script reports both the exact (binomial) p-value and
-the continuity-corrected asymptotic chi-squared p-value, the marginal
-rates, the rate difference, and a 95% Newcombe-Wilson hybrid CI on the
-difference.
-
-Inputs
-------
-  analysis/results/variance_validation/per_cell_runs.csv
-  Produced by analysis/validate_variance_figures.py.
-
-Outputs
--------
-  analysis/results/variance_validation/mcnemar_convergence.csv
-  One row per scalar quantity (counts, marginals, test statistics,
-  CIs, effect sizes), each with a stable id and a description.
-
-Run
----
+Examples:
     python analysis/test_convergence_mcnemar.py
-    python analysis/test_convergence_mcnemar.py \\
-        --method-a gmres_rl --method-b rand_gmres
+    python analysis/test_convergence_mcnemar.py --method-a gmres_rl --method-b rand_gmres
 """
 
 from __future__ import annotations
@@ -46,33 +32,26 @@ from pathlib import Path
 from scipy.stats import binomtest, chi2, norm
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_INPUT = REPO_ROOT / "analysis" / "results" / "variance_validation" / "per_cell_runs.csv"
-DEFAULT_OUT = REPO_ROOT / "analysis" / "results" / "variance_validation" / "mcnemar_convergence.csv"
+DEFAULT_INPUT = REPO_ROOT / "results" / "variance_validation" / "per_cell_runs.csv"
+DEFAULT_OUT = REPO_ROOT / "results" / "variance_validation" / "mcnemar_convergence.csv"
 
-# Default: hypothesise gmres_rl converges more often than rand_gmres.
-# Swap with --method-a / --method-b for any other matched comparison.
+# default A vs B; override with --method-a / --method-b
 DEFAULT_METHOD_A = "gmres_rl"
 DEFAULT_METHOD_B = "rand_gmres"
 
 
-# --------------------------------------------------------------------------- #
-# Data loading
-# --------------------------------------------------------------------------- #
-
+# returns one (matrix, seed, A_converged, B_converged) tuple per matched
+# cell where both methods have a run. cells missing one method are dropped.
 def load_paired_outcomes(csv_path: Path,
                           method_a: str,
                           method_b: str) -> list[tuple[str, int, bool, bool]]:
-    """Return a list of (matrix, seed, A_converged, B_converged) tuples,
-    one per matched (matrix, seed) cell where both methods have a run.
-    Cells missing one method are dropped from the test.
-    """
     by_cell: dict[tuple[str, int], dict[str, bool]] = defaultdict(dict)
     with csv_path.open() as fh:
         for row in csv.DictReader(fh):
             if row["method"] not in (method_a, method_b):
                 continue
             key = (row["matrix"], int(row["seed"]))
-            # The CSV stores Python booleans as 'True'/'False' strings.
+            # CSV stores Python booleans as 'True'/'False' strings
             by_cell[key][row["method"]] = row["converged"].strip().lower() == "true"
 
     pairs: list[tuple[str, int, bool, bool]] = []
@@ -87,19 +66,13 @@ def load_paired_outcomes(csv_path: Path,
     return pairs
 
 
-# --------------------------------------------------------------------------- #
-# Contingency table
-# --------------------------------------------------------------------------- #
-
+# returns (n_AA, n_AB_only, n_BA_only, n_neither) for the paired 2x2 table:
+#   n_AA       both methods converged
+#   n_AB_only  A converged, B did not (favors A)
+#   n_BA_only  B converged, A did not (favors B)
+#   n_neither  both methods failed
 def contingency_table(pairs: list[tuple[str, int, bool, bool]]
                        ) -> tuple[int, int, int, int]:
-    """Return (n_AA, n_AB_only, n_BA_only, n_neither):
-
-        n_AA       both methods converged
-        n_AB_only  method A converged, method B did not  (favors A)
-        n_BA_only  method B converged, method A did not  (favors B)
-        n_neither  both methods failed
-    """
     n_AA = sum(1 for _, _, a, b in pairs if a and b)
     n_AB_only = sum(1 for _, _, a, b in pairs if a and not b)
     n_BA_only = sum(1 for _, _, a, b in pairs if (not a) and b)
@@ -107,17 +80,10 @@ def contingency_table(pairs: list[tuple[str, int, bool, bool]]
     return n_AA, n_AB_only, n_BA_only, n_neither
 
 
-# --------------------------------------------------------------------------- #
-# McNemar's test
-# --------------------------------------------------------------------------- #
-
+# exact two-sided McNemar p-value via the binomial test on the discordant
+# cells. preferred whenever n_disc_a + n_disc_b is small (< 25 rule of
+# thumb); always conservative. under H0, n_disc_a ~ Binomial(n_disc, 0.5).
 def mcnemar_exact(n_disc_a: int, n_disc_b: int) -> float:
-    """Two-sided exact McNemar p-value via the binomial test on the
-    discordant cells. Recommended whenever n_disc_a + n_disc_b is small
-    (rule of thumb < 25); always conservative.
-
-    Under H0, n_disc_a ~ Binomial(n_disc_a + n_disc_b, 0.5).
-    """
     n = n_disc_a + n_disc_b
     if n == 0:
         return float("nan")
@@ -125,18 +91,11 @@ def mcnemar_exact(n_disc_a: int, n_disc_b: int) -> float:
     return float(binomtest(k, n, p=0.5, alternative="two-sided").pvalue)
 
 
+# McNemar chi-squared statistic with Edwards' continuity correction:
+#   chi^2 = (|n_disc_a - n_disc_b| - 1)^2 / (n_disc_a + n_disc_b)
+# distributed under H0 as chi-squared(1). use mcnemar_exact for small n.
 def mcnemar_asymptotic(n_disc_a: int, n_disc_b: int,
                        continuity: bool = True) -> tuple[float, float]:
-    """McNemar's chi-squared statistic and asymptotic two-sided p-value.
-
-    With Edwards' continuity correction (default), the statistic is
-
-        chi^2 = (|n_disc_a - n_disc_b| - 1)^2 / (n_disc_a + n_disc_b)
-
-    distributed under H0 as chi-squared with 1 d.f. The continuity
-    correction matters only for moderate sample sizes; for the exact
-    p-value, use ``mcnemar_exact``.
-    """
     n = n_disc_a + n_disc_b
     if n == 0:
         return float("nan"), float("nan")
@@ -148,12 +107,8 @@ def mcnemar_asymptotic(n_disc_a: int, n_disc_b: int,
     return chi_sq, p_value
 
 
-# --------------------------------------------------------------------------- #
-# Confidence intervals
-# --------------------------------------------------------------------------- #
-
+# Wilson score CI for a binomial proportion k/n at level 1 - alpha
 def wilson_ci(k: int, n: int, alpha: float = 0.05) -> tuple[float, float]:
-    """Wilson score CI for a binomial proportion k/n at level 1 - alpha."""
     if n == 0:
         return (float("nan"), float("nan"))
     z = float(norm.ppf(1 - alpha / 2))
@@ -164,16 +119,12 @@ def wilson_ci(k: int, n: int, alpha: float = 0.05) -> tuple[float, float]:
     return (center - halfwidth, center + halfwidth)
 
 
+# Newcombe (1998) hybrid Wilson interval for the difference in paired
+# proportions p_A - p_B. preferred over the Wald paired CI when
+# proportions are near 0 or 1 (true here; rates ~0.9). reference is in
+# the module docstring.
 def newcombe_paired_ci(n_AA: int, n_AB_only: int, n_BA_only: int, n_neither: int,
                        alpha: float = 0.05) -> tuple[float, float]:
-    """Newcombe (1998) hybrid Wilson interval for the difference in paired
-    proportions, p_A - p_B. Recommended over the Wald paired CI when
-    proportions are near 0 or 1, which is the case here (rates ~0.9).
-
-    Reference: Newcombe, R.G. (1998). "Improved confidence intervals
-    for the difference between binomial proportions based on paired data."
-    Statistics in Medicine, 17(22), 2635-2650.
-    """
     n = n_AA + n_AB_only + n_BA_only + n_neither
     if n == 0:
         return (float("nan"), float("nan"))
@@ -186,8 +137,8 @@ def newcombe_paired_ci(n_AA: int, n_AB_only: int, n_BA_only: int, n_neither: int
     lA, uA = wilson_ci(n_A_yes, n, alpha=alpha)
     lB, uB = wilson_ci(n_B_yes, n, alpha=alpha)
 
-    # Phi (Pearson) correlation of the paired binary outcomes; falls back
-    # to 0 when any marginal vanishes (the formula's denominator becomes 0).
+    # phi (Pearson) correlation of the paired binary outcomes; falls back
+    # to 0 when any marginal vanishes (denominator otherwise 0)
     row1 = n_A_yes
     row0 = n - n_A_yes
     col1 = n_B_yes
@@ -198,8 +149,8 @@ def newcombe_paired_ci(n_AA: int, n_AB_only: int, n_BA_only: int, n_neither: int
     else:
         phi = (n_AA * n_neither - n_AB_only * n_BA_only) / denom_phi
 
-    # Newcombe's "method 10": clamp the two-by-two phi-adjusted variance
-    # contributions to be non-negative under the radical.
+    # Newcombe's "method 10": clamp phi-adjusted variance contributions
+    # to be non-negative under the radical
     L = math.sqrt(max((p_A - lA) ** 2
                       - 2 * phi * (p_A - lA) * (uB - p_B)
                       + (uB - p_B) ** 2, 0.0))
@@ -211,10 +162,6 @@ def newcombe_paired_ci(n_AA: int, n_AB_only: int, n_BA_only: int, n_neither: int
     return (delta - L, delta + U)
 
 
-# --------------------------------------------------------------------------- #
-# CSV writer
-# --------------------------------------------------------------------------- #
-
 def write_results_csv(rows: list[dict], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = ["id", "description", "value", "interpretation"]
@@ -224,14 +171,10 @@ def write_results_csv(rows: list[dict], path: Path) -> None:
         writer.writerows(rows)
 
 
-# --------------------------------------------------------------------------- #
-# Main
-# --------------------------------------------------------------------------- #
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, default=str(DEFAULT_INPUT),
-                        help="per_cell_runs.csv produced by validate_variance_figures.py")
+                        help="per_cell_runs.csv produced by compute_variance_statistics.py")
     parser.add_argument("--out", type=str, default=str(DEFAULT_OUT),
                         help="Where to write the test results CSV.")
     parser.add_argument("--method-a", type=str, default=DEFAULT_METHOD_A,
@@ -261,7 +204,7 @@ def main() -> None:
 
     discordant_ratio = (n_AB / n_BA) if n_BA > 0 else float("inf")
 
-    # Console summary -------------------------------------------------------
+    # console summary
     print()
     print("=== McNemar's test on convergence rate ===")
     print(f"  H0: P({args.method_a}-only conv) == P({args.method_b}-only conv)")
@@ -283,7 +226,7 @@ def main() -> None:
     print(f"  McNemar asymptotic chi^2  = {chi_sq:.4f},  p = {p_asymp:.6e}")
     print(f"     (continuity-corrected, df = 1)")
 
-    # Results CSV -----------------------------------------------------------
+    # results CSV
     interpretation = (
         f"{args.method_a} converged on {100*p_A:.2f}% of cells vs "
         f"{args.method_b}'s {100*p_B:.2f}%. Of {n_disc} discordant cells, "

@@ -1,56 +1,23 @@
 """
-analysis/validate_variance_figures.py
+Variance and tail-event statistics over the §4.2 / §7.7 benchmark JSON.
+Backs the seed-std, p90 Arnoldi, cap-hit, and CV figures quoted in
+Tables 3 and 4. Streams the (potentially 800 MB) full_run.json via ijson
+so peak RAM stays well under 100 MB.
 
-Computes a documented set of variance and tail-event statistics from the
-Peairs-style 159-matrix GMRES benchmark and writes them to three CSVs.
-Each summary statistic is paired with the slice of the data it is computed
-on and the formula that produced it, so any single number can be
-re-derived from the per-cell or per-matrix tables.
+Compares two stochastic restart-selection methods (deterministic
+schedules have no seed-to-seed variance and are skipped). Defaults are
+"rand_gmres" and "gmres_rl"; override with --method-a / --method-b for
+suffixed names like rand_gmres_10_20 / gmres_rl_m20.
 
-The script compares the two stochastic adaptive restart-selection methods
-in the benchmark: ``rand_gmres`` (uniform random m) and ``gmres_rl`` (the
-DQN restart controller). Methods with deterministic schedules
-(``gmres20``, ``gmres60``, ``angle_gmres``) are excluded since they have no
-seed-to-seed variance to compare.
+Outputs in --out-dir:
+  per_cell_runs.csv          one row per (matrix, method, seed); source of truth
+  per_matrix_statistics.csv  one row per matrix; per-method mean/std/CV
+  summary_statistics.csv     one row per scalar with id, formula, slice,
+                             sample size, value, and interpretation
 
-Input
------
-A JSON file produced by ``analysis/run_peairs_style_159_suite.py`` with the
-schema:
-  meta:
-    max_total_arnoldi : int
-    methods           : list[str]
-    ...
-  results:
-    <matrix-name>:
-      methods:
-        <method-name>:
-          runs : list of per-seed dicts with total_arnoldi,
-                 elapsed_seconds, converged, final_relative_residual_norm
-
-Outputs (in ``--out-dir``)
---------------------------
-1. ``per_cell_runs.csv``
-   One row per (matrix, method, seed). Source of truth; every other CSV
-   is computed from this one.
-
-2. ``per_matrix_statistics.csv``
-   One row per matrix. Per-method mean / std / coefficient of variation
-   across the 5 seeds, plus convergence and cap counts and per-matrix
-   tail ratios.
-
-3. ``summary_statistics.csv``
-   One row per scalar statistic, with: stable identifier, description,
-   value, units, slice, sample size, formula, and a one-line numerical
-   interpretation.
-
-Run
----
-    python analysis/validate_variance_figures.py
-    python analysis/validate_variance_figures.py --input src/logs/159-partial.json
-
-Memory: streams the input via ``ijson`` so peak RAM is well under 100 MB
-even for the 787 MB partial dump.
+Examples:
+    python analysis/compute_variance_statistics.py
+    python analysis/compute_variance_statistics.py --input results/peairs_155/full_run.json
 """
 
 from __future__ import annotations
@@ -66,32 +33,28 @@ try:
     import ijson  # noqa: F401
 except ImportError as exc:  # pragma: no cover
     raise SystemExit(
-        "ijson is required for streaming the 787 MB JSON. Install with:\n"
+        "ijson is required for streaming the benchmark JSON. Install with:\n"
         "    pip install ijson"
     ) from exc
 
 import ijson  # type: ignore  # re-import after the install-guard
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_INPUT = REPO_ROOT / "src" / "logs" / "159-partial.json"
-DEFAULT_OUT = REPO_ROOT / "analysis" / "results" / "variance_validation"
+DEFAULT_INPUT = REPO_ROOT / "results" / "peairs_155" / "full_run.json"
+DEFAULT_OUT = REPO_ROOT / "results" / "variance_validation"
 
-# Stochastic restart-selection methods. Deterministic schedules
-# (gmres20, gmres60, angle_gmres) have no seed-to-seed variance and are
-# omitted from this analysis.
-METHODS = ("rand_gmres", "gmres_rl")
+# default stochastic methods compared (override via --method-a / --method-b)
+DEFAULT_METHOD_A = "rand_gmres"
+DEFAULT_METHOD_B = "gmres_rl"
 
-# The Arnoldi cap from meta.max_total_arnoldi. A run that reports
+# matches meta.max_total_arnoldi from §4.2. a run that reports
 # total_arnoldi >= CAP is treated as "hit the cap" regardless of the
-# `converged` flag (the recorder allows a few-Arnoldi-step overshoot).
+# converged flag (the recorder allows a few-step overshoot).
 ARNOLDI_CAP = 100_000
 
 
-# --------------------------------------------------------------------------- #
-# Streaming load
-# --------------------------------------------------------------------------- #
-
-def load_per_cell_records(json_path: Path) -> list[dict]:
+# streaming load
+def load_per_cell_records(json_path: Path, methods: tuple[str, str]) -> list[dict]:
     """Stream the partial-results JSON and yield one dict per (matrix, method,
     seed) cell. We deliberately ignore the per-cycle traces (which are the
     bulk of the file size) -- they are not needed for any figure here.
@@ -99,7 +62,7 @@ def load_per_cell_records(json_path: Path) -> list[dict]:
     records: list[dict] = []
     with json_path.open("rb") as f:
         for matrix_name, entry in ijson.kvitems(f, "results"):
-            for method in METHODS:
+            for method in methods:
                 method_block = entry.get("methods", {}).get(method)
                 if method_block is None:
                     continue
@@ -116,20 +79,18 @@ def load_per_cell_records(json_path: Path) -> list[dict]:
     return records
 
 
-# --------------------------------------------------------------------------- #
-# Per-matrix aggregation
-# --------------------------------------------------------------------------- #
-
-def build_per_matrix_table(per_cell: list[dict]) -> list[dict]:
+# per-matrix aggregation
+def build_per_matrix_table(per_cell: list[dict], methods: tuple[str, str]) -> list[dict]:
     """Aggregate per-cell records into one row per matrix with both methods'
     mean / std / CV / convergence count, plus matched indicators used by the
     summary statistics.
 
     Returns a list of dicts, sorted alphabetically by matrix name.
     """
+    m_a, m_b = methods
     by_matrix: dict[str, dict[str, list[dict]]] = {}
     for r in per_cell:
-        by_matrix.setdefault(r["matrix"], {m: [] for m in METHODS})
+        by_matrix.setdefault(r["matrix"], {m: [] for m in methods})
         by_matrix[r["matrix"]][r["method"]].append(r)
 
     rows: list[dict] = []
@@ -138,7 +99,7 @@ def build_per_matrix_table(per_cell: list[dict]) -> list[dict]:
         row: dict = {"matrix": matrix}
         per_method_arr = {}
         per_method_conv = {}
-        for m in METHODS:
+        for m in methods:
             arn = np.array([c["total_arnoldi"] for c in cells[m]], dtype=np.float64)
             conv = np.array([c["converged"] for c in cells[m]], dtype=bool)
             per_method_arr[m] = arn
@@ -163,18 +124,18 @@ def build_per_matrix_table(per_cell: list[dict]) -> list[dict]:
                     if (arn.size and mean and mean != 0) else np.nan,
             })
 
-        rand_conv_all = bool(per_method_conv["rand_gmres"].all()) and per_method_arr["rand_gmres"].size == 5
-        rl_conv_all = bool(per_method_conv["gmres_rl"].all()) and per_method_arr["gmres_rl"].size == 5
+        rand_conv_all = bool(per_method_conv[m_a].all()) and per_method_arr[m_a].size == 5
+        rl_conv_all = bool(per_method_conv[m_b].all()) and per_method_arr[m_b].size == 5
         row["both_fully_converged"] = int(rand_conv_all and rl_conv_all)
 
         # Per-matrix winners. Defined only when both methods fully converged
         # (otherwise std vs cap-hit comparisons are not apples-to-apples).
         if row["both_fully_converged"]:
             row["rl_std_lower_than_rand"] = int(
-                row["gmres_rl_arnoldi_std"] < row["rand_gmres_arnoldi_std"]
+                row[f"{m_b}_arnoldi_std"] < row[f"{m_a}_arnoldi_std"]
             )
             row["rl_cv_lower_than_rand"] = int(
-                row["gmres_rl_arnoldi_cv"] < row["rand_gmres_arnoldi_cv"]
+                row[f"{m_b}_arnoldi_cv"] < row[f"{m_a}_arnoldi_cv"]
             )
         else:
             row["rl_std_lower_than_rand"] = ""
@@ -184,12 +145,8 @@ def build_per_matrix_table(per_cell: list[dict]) -> list[dict]:
     return rows
 
 
-# --------------------------------------------------------------------------- #
-# Helpers used by summary computations
-# --------------------------------------------------------------------------- #
-
+# helpers used by summary computations
 def _arr(per_matrix: list[dict], col: str, where: Iterable[bool] | None = None) -> np.ndarray:
-    """Pull column ``col`` from per_matrix rows, optionally masked."""
     vals = np.array([r[col] for r in per_matrix], dtype=np.float64)
     if where is not None:
         vals = vals[np.fromiter(where, dtype=bool, count=len(per_matrix))]
@@ -209,12 +166,10 @@ def _percentile(arr: np.ndarray, q: float) -> float:
     return float(np.percentile(arr, q)) if arr.size else float("nan")
 
 
-# --------------------------------------------------------------------------- #
-# Summary statistics
-# --------------------------------------------------------------------------- #
-
+# summary statistics
 def compute_summary_statistics(per_cell: list[dict],
-                               per_matrix: list[dict]) -> list[dict]:
+                               per_matrix: list[dict],
+                               methods: tuple[str, str]) -> list[dict]:
     """Compute the scalar variance / tail statistics emitted to CSV.
 
     Each entry in the returned list documents one statistic with:
@@ -229,6 +184,7 @@ def compute_summary_statistics(per_cell: list[dict],
                        per_matrix table, sufficient to re-derive the value
       - interpretation a one-line numerical restatement of the value
     """
+    m_a, m_b = methods
     out: list[dict] = []
 
     # Index per_matrix by name for fast lookup.
@@ -240,13 +196,13 @@ def compute_summary_statistics(per_cell: list[dict],
     # have nonzero mean Arnoldi -- this is the slice used for the worst/mean
     # tail figures, since the ratio is undefined when mean == 0.
     safe_mask = converged_mask & np.array([
-        r["rand_gmres_arnoldi_mean"] > 0 and r["gmres_rl_arnoldi_mean"] > 0
+        r[f"{m_a}_arnoldi_mean"] > 0 and r[f"{m_b}_arnoldi_mean"] > 0
         for r in per_matrix
     ], dtype=bool)
     n_safe = int(safe_mask.sum())
 
-    # ---------------------------------------------------------------- 1. Convergence rates ---
-    for m in METHODS:
+    # 1. convergence rates
+    for m in methods:
         n_full = sum(1 for r in per_matrix
                      if r[f"{m}_n_converged"] == r[f"{m}_n_seeds"]
                      and r[f"{m}_n_seeds"] > 0)
@@ -264,11 +220,11 @@ def compute_summary_statistics(per_cell: list[dict],
                 f"({100*n_full/n_matrices_total:.1f}%).",
         })
 
-    # ----------------------------------------- 2. Per-cell catastrophic events (cap hits) ---
-    cells_by_method: dict[str, list[dict]] = {m: [] for m in METHODS}
+    # 2. per-cell cap hits
+    cells_by_method: dict[str, list[dict]] = {m: [] for m in methods}
     for r in per_cell:
         cells_by_method[r["method"]].append(r)
-    for m in METHODS:
+    for m in methods:
         cells = cells_by_method[m]
         n_cells = len(cells)
         n_capped = sum(1 for c in cells if c["total_arnoldi"] >= ARNOLDI_CAP)
@@ -287,25 +243,25 @@ def compute_summary_statistics(per_cell: list[dict],
         })
 
     # Reduction figure
-    n_capped_rand = sum(1 for c in cells_by_method["rand_gmres"] if c["total_arnoldi"] >= ARNOLDI_CAP)
-    n_capped_rl = sum(1 for c in cells_by_method["gmres_rl"] if c["total_arnoldi"] >= ARNOLDI_CAP)
+    n_capped_rand = sum(1 for c in cells_by_method[m_a] if c["total_arnoldi"] >= ARNOLDI_CAP)
+    n_capped_rl = sum(1 for c in cells_by_method[m_b] if c["total_arnoldi"] >= ARNOLDI_CAP)
     out.append({
         "id": "per_cell_cap_hits_reduction_rl_vs_rand",
-        "description": "Fractional reduction in cap-hits going from rand_gmres to gmres_rl",
+        "description": f"Fractional reduction in cap-hits going from {m_a} to {m_b}",
         "method": "comparison",
         "value": 1.0 - n_capped_rl / n_capped_rand if n_capped_rand else float("nan"),
         "units": "fraction",
         "slice": "all (matrix, seed) cells",
-        "sample_size": len(cells_by_method["rand_gmres"]),
-        "formula": "1 - (per_cell_cap_hits_gmres_rl / per_cell_cap_hits_rand_gmres)",
+        "sample_size": len(cells_by_method[m_a]),
+        "formula": f"1 - (per_cell_cap_hits_{m_b} / per_cell_cap_hits_{m_a})",
         "interpretation":
-            f"DQN reduces catastrophic seed-cell failures by "
-            f"{100*(1 - n_capped_rl / n_capped_rand):.1f}% relative to randGMRES "
+            f"{m_b} reduces catastrophic seed-cell failures by "
+            f"{100*(1 - n_capped_rl / n_capped_rand):.1f}% relative to {m_a} "
             f"({n_capped_rand} -> {n_capped_rl}).",
     })
 
-    # ----------------------------------------- 3. Full-matrix failures (all 5 seeds capped) ---
-    for m in METHODS:
+    # 3. full-matrix failures (all seeds capped)
+    for m in methods:
         n_full_fail = sum(1 for r in per_matrix
                           if r[f"{m}_n_seeds"] > 0 and r[f"{m}_n_capped"] == r[f"{m}_n_seeds"])
         out.append({
@@ -321,8 +277,8 @@ def compute_summary_statistics(per_cell: list[dict],
                 f"{m} gave up entirely on {n_full_fail}/{n_matrices_total} matrices.",
         })
 
-    # ---------------------- 4. Partial failures (some seeds capped, others converged) ---
-    for m in METHODS:
+    # 4. partial failures (some seeds capped, others converged)
+    for m in methods:
         n_partial = sum(
             1 for r in per_matrix
             if r[f"{m}_n_seeds"] > 0
@@ -342,8 +298,8 @@ def compute_summary_statistics(per_cell: list[dict],
                 f"{n_partial}/{n_matrices_total} matrices.",
         })
 
-    # ----------------------------------------- 5. Per-cell percentiles of total Arnoldi ---
-    for m in METHODS:
+    # 5. per-cell percentiles of total Arnoldi
+    for m in methods:
         arn = np.array([c["total_arnoldi"] for c in cells_by_method[m]], dtype=np.float64)
         for q in (50, 75, 90, 95, 99):
             out.append({
@@ -359,40 +315,40 @@ def compute_summary_statistics(per_cell: list[dict],
                     f"At p{q}, {m}'s seed-cell needed {int(np.percentile(arn, q))} Arnoldi iterations.",
             })
 
-    # ----------------------------------------- 6. Per-matrix seed-std (Arnoldi) ---
-    rand_std = _arr(per_matrix, "rand_gmres_arnoldi_std", converged_mask)
-    rl_std = _arr(per_matrix, "gmres_rl_arnoldi_std", converged_mask)
+    # 6. per-matrix seed-std on Arnoldi count
+    rand_std = _arr(per_matrix, f"{m_a}_arnoldi_std", converged_mask)
+    rl_std = _arr(per_matrix, f"{m_b}_arnoldi_std", converged_mask)
 
     out.extend([
         {
             "id": "median_seed_std_rand",
-            "description": "Median (across matrices) of seed-to-seed std in total Arnoldi for rand_gmres",
-            "method": "rand_gmres",
+            "description": f"Median (across matrices) of seed-to-seed std in total Arnoldi for {m_a}",
+            "method": m_a,
             "value": float(np.median(rand_std)),
             "units": "arnoldi_iterations",
             "slice": f"{n_both_converged} matrices where both methods fully converged on all 5 seeds",
             "sample_size": n_both_converged,
-            "formula": "numpy.median(per_matrix[both_fully_converged].rand_gmres_arnoldi_std)",
+            "formula": f"numpy.median(per_matrix[both_fully_converged].{m_a}_arnoldi_std)",
             "interpretation":
-                f"On a typical matrix, randGMRES's per-seed Arnoldi count varies by std "
+                f"On a typical matrix, {m_a}'s per-seed Arnoldi count varies by std "
                 f"{int(np.median(rand_std))}.",
         },
         {
             "id": "median_seed_std_rl",
-            "description": "Median (across matrices) of seed-to-seed std in total Arnoldi for gmres_rl",
-            "method": "gmres_rl",
+            "description": f"Median (across matrices) of seed-to-seed std in total Arnoldi for {m_b}",
+            "method": m_b,
             "value": float(np.median(rl_std)),
             "units": "arnoldi_iterations",
             "slice": f"{n_both_converged} matrices where both methods fully converged on all 5 seeds",
             "sample_size": n_both_converged,
-            "formula": "numpy.median(per_matrix[both_fully_converged].gmres_rl_arnoldi_std)",
+            "formula": f"numpy.median(per_matrix[both_fully_converged].{m_b}_arnoldi_std)",
             "interpretation":
-                f"On a typical matrix, DQN's per-seed Arnoldi count varies by std "
+                f"On a typical matrix, {m_b}'s per-seed Arnoldi count varies by std "
                 f"{int(np.median(rl_std))}.",
         },
         {
             "id": "median_seed_std_reduction_rl_vs_rand",
-            "description": "Fractional reduction in median seed-std going from rand_gmres to gmres_rl",
+            "description": f"Fractional reduction in median seed-std going from {m_a} to {m_b}",
             "method": "comparison",
             "value": 1.0 - float(np.median(rl_std)) / float(np.median(rand_std)),
             "units": "fraction",
@@ -400,32 +356,32 @@ def compute_summary_statistics(per_cell: list[dict],
             "sample_size": n_both_converged,
             "formula": "1 - median_seed_std_rl / median_seed_std_rand",
             "interpretation":
-                f"DQN's typical seed-to-seed std is "
-                f"{100*(1 - float(np.median(rl_std)) / float(np.median(rand_std))):.1f}% lower than randGMRES.",
+                f"{m_b}'s typical seed-to-seed std is "
+                f"{100*(1 - float(np.median(rl_std)) / float(np.median(rand_std))):.1f}% lower than {m_a}.",
         },
         {
             "id": "mean_seed_std_rand",
-            "description": "Arithmetic mean of seed-std across matrices for rand_gmres",
-            "method": "rand_gmres",
+            "description": f"Arithmetic mean of seed-std across matrices for {m_a}",
+            "method": m_a,
             "value": float(rand_std.mean()),
             "units": "arnoldi_iterations",
             "slice": f"{n_both_converged} matrices where both methods fully converged",
             "sample_size": n_both_converged,
-            "formula": "numpy.mean(per_matrix[both_fully_converged].rand_gmres_arnoldi_std)",
+            "formula": f"numpy.mean(per_matrix[both_fully_converged].{m_a}_arnoldi_std)",
             "interpretation":
-                f"Mean per-matrix seed-std (random): {rand_std.mean():.0f}.",
+                f"Mean per-matrix seed-std ({m_a}): {rand_std.mean():.0f}.",
         },
         {
             "id": "mean_seed_std_rl",
-            "description": "Arithmetic mean of seed-std across matrices for gmres_rl",
-            "method": "gmres_rl",
+            "description": f"Arithmetic mean of seed-std across matrices for {m_b}",
+            "method": m_b,
             "value": float(rl_std.mean()),
             "units": "arnoldi_iterations",
             "slice": f"{n_both_converged} matrices where both methods fully converged",
             "sample_size": n_both_converged,
-            "formula": "numpy.mean(per_matrix[both_fully_converged].gmres_rl_arnoldi_std)",
+            "formula": f"numpy.mean(per_matrix[both_fully_converged].{m_b}_arnoldi_std)",
             "interpretation":
-                f"Mean per-matrix seed-std (DQN): {rl_std.mean():.0f}.",
+                f"Mean per-matrix seed-std ({m_b}): {rl_std.mean():.0f}.",
         },
     ])
 
@@ -439,18 +395,18 @@ def compute_summary_statistics(per_cell: list[dict],
     )
     out.append({
         "id": "geomean_std_ratio_rl_over_rand",
-        "description": "Geometric mean of per-matrix std ratio gmres_rl_std / rand_gmres_std",
+        "description": f"Geometric mean of per-matrix std ratio {m_b}_std / {m_a}_std",
         "method": "comparison",
         "value": _gm_std,
         "units": "ratio",
         "slice": f"{int(_std_mask.sum())} matrices where both methods fully converged AND both stds > 0",
         "sample_size": int(_std_mask.sum()),
-        "formula": "exp(mean(log(per_matrix.gmres_rl_arnoldi_std / per_matrix.rand_gmres_arnoldi_std))), "
+        "formula": f"exp(mean(log(per_matrix.{m_b}_arnoldi_std / per_matrix.{m_a}_arnoldi_std))), "
                    "filtered to rows where both stds > 0 (a zero std would otherwise "
                    "produce a degenerate ratio of 0 or infinity).",
         "interpretation":
-            f"Geo-mean per-matrix std ratio (rl/rand) = {_gm_std:.3f}; "
-            f"DQN's per-matrix std is on average ~"
+            f"Geo-mean per-matrix std ratio ({m_b}/{m_a}) = {_gm_std:.3f}; "
+            f"{m_b}'s per-matrix std is on average ~"
             f"{100*(1 - _gm_std):.1f}% lower.",
     })
 
@@ -466,7 +422,7 @@ def compute_summary_statistics(per_cell: list[dict],
     out.extend([
         {
             "id": "n_matrices_rl_std_lower_than_rand",
-            "description": "Matrices where DQN's seed-std is strictly less than rand's",
+            "description": f"Matrices where {m_b}'s seed-std is strictly less than {m_a}'s",
             "method": "comparison",
             "value": n_rl_lower_std,
             "units": "count",
@@ -474,12 +430,12 @@ def compute_summary_statistics(per_cell: list[dict],
             "sample_size": n_both_converged,
             "formula": "sum(per_matrix[both_fully_converged].rl_std_lower_than_rand)",
             "interpretation":
-                f"DQN had lower seed-std than random on "
+                f"{m_b} had lower seed-std than {m_a} on "
                 f"{n_rl_lower_std}/{n_both_converged} ({100*n_rl_lower_std/n_both_converged:.0f}%) matrices.",
         },
         {
             "id": "n_matrices_rl_cv_lower_than_rand",
-            "description": "Matrices where DQN's coefficient of variation is strictly less than rand's",
+            "description": f"Matrices where {m_b}'s coefficient of variation is strictly less than {m_a}'s",
             "method": "comparison",
             "value": n_rl_lower_cv,
             "units": "count",
@@ -487,7 +443,7 @@ def compute_summary_statistics(per_cell: list[dict],
             "sample_size": n_both_converged,
             "formula": "sum(per_matrix[both_fully_converged].rl_cv_lower_than_rand)",
             "interpretation":
-                f"DQN had lower coefficient of variation than random on "
+                f"{m_b} had lower coefficient of variation than {m_a} on "
                 f"{n_rl_lower_cv}/{n_both_converged} ({100*n_rl_lower_cv/n_both_converged:.0f}%) matrices.",
         },
     ])
@@ -496,47 +452,47 @@ def compute_summary_statistics(per_cell: list[dict],
     # CV = std / mean is undefined when mean = 0, so per_matrix carries NaN
     # in those rows. Filter NaNs before the median; the sample size reported
     # in the CSV reflects the actual number of finite-CV rows used.
-    rand_cv_all = _arr(per_matrix, "rand_gmres_arnoldi_cv", converged_mask)
-    rl_cv_all = _arr(per_matrix, "gmres_rl_arnoldi_cv", converged_mask)
+    rand_cv_all = _arr(per_matrix, f"{m_a}_arnoldi_cv", converged_mask)
+    rl_cv_all = _arr(per_matrix, f"{m_b}_arnoldi_cv", converged_mask)
     rand_cv = rand_cv_all[np.isfinite(rand_cv_all)]
     rl_cv = rl_cv_all[np.isfinite(rl_cv_all)]
     out.extend([
         {
             "id": "median_cv_rand",
-            "description": "Median (across matrices) of std/mean for rand_gmres",
-            "method": "rand_gmres",
+            "description": f"Median (across matrices) of std/mean for {m_a}",
+            "method": m_a,
             "value": float(np.median(rand_cv)) if rand_cv.size else float("nan"),
             "units": "ratio",
             "slice": f"{int(rand_cv.size)} matrices where both methods fully converged "
-                     f"AND rand_gmres mean Arnoldi > 0",
+                     f"AND {m_a} mean Arnoldi > 0",
             "sample_size": int(rand_cv.size),
-            "formula": "numpy.median(per_matrix[both_fully_converged "
-                       "AND rand_gmres_arnoldi_mean > 0].rand_gmres_arnoldi_cv)",
+            "formula": f"numpy.median(per_matrix[both_fully_converged "
+                       f"AND {m_a}_arnoldi_mean > 0].{m_a}_arnoldi_cv)",
             "interpretation":
-                f"Typical randGMRES coefficient of variation: "
+                f"Typical {m_a} coefficient of variation: "
                 f"{100 * float(np.median(rand_cv)):.2f}%."
                 if rand_cv.size else "no rows with finite CV",
         },
         {
             "id": "median_cv_rl",
-            "description": "Median (across matrices) of std/mean for gmres_rl",
-            "method": "gmres_rl",
+            "description": f"Median (across matrices) of std/mean for {m_b}",
+            "method": m_b,
             "value": float(np.median(rl_cv)) if rl_cv.size else float("nan"),
             "units": "ratio",
             "slice": f"{int(rl_cv.size)} matrices where both methods fully converged "
-                     f"AND gmres_rl mean Arnoldi > 0",
+                     f"AND {m_b} mean Arnoldi > 0",
             "sample_size": int(rl_cv.size),
-            "formula": "numpy.median(per_matrix[both_fully_converged "
-                       "AND gmres_rl_arnoldi_mean > 0].gmres_rl_arnoldi_cv)",
+            "formula": f"numpy.median(per_matrix[both_fully_converged "
+                       f"AND {m_b}_arnoldi_mean > 0].{m_b}_arnoldi_cv)",
             "interpretation":
-                f"Typical DQN coefficient of variation: "
+                f"Typical {m_b} coefficient of variation: "
                 f"{100 * float(np.median(rl_cv)):.2f}%."
                 if rl_cv.size else "no rows with finite CV",
         },
     ])
 
-    # ----------------------------------------- 7. Per-matrix tail of worst/mean ratio ---
-    for m in METHODS:
+    # 7. per-matrix tail of worst/mean ratio
+    for m in methods:
         col = f"{m}_worst_over_mean"
         vals = _arr(per_matrix, col, safe_mask)
         for q in (50, 90, 95, 99):
@@ -554,8 +510,8 @@ def compute_summary_statistics(per_cell: list[dict],
                     f"{_percentile(vals, q):.3f}x the per-matrix mean.",
             })
 
-    # ----------------------------------------- 8. Per-matrix (max - min) / mean spread ---
-    for m in METHODS:
+    # 8. per-matrix (max - min) / mean spread
+    for m in methods:
         col = f"{m}_minmax_spread_over_mean"
         vals = _arr(per_matrix, col, safe_mask)
         for q in (50, 90, 99):
@@ -573,33 +529,31 @@ def compute_summary_statistics(per_cell: list[dict],
                     f"{_percentile(vals, q):.3f} * its per-matrix mean.",
             })
 
-    # ----------------------------------------- 9. Geo-mean Arnoldi ratio (rl/rand) ---
-    rand_mean = _arr(per_matrix, "rand_gmres_arnoldi_mean", converged_mask)
-    rl_mean = _arr(per_matrix, "gmres_rl_arnoldi_mean", converged_mask)
+    # 9. geo-mean per-matrix Arnoldi ratio (method B / method A)
+    rand_mean = _arr(per_matrix, f"{m_a}_arnoldi_mean", converged_mask)
+    rl_mean = _arr(per_matrix, f"{m_b}_arnoldi_mean", converged_mask)
     valid = (rand_mean > 0) & (rl_mean > 0)
     arn_ratio = _safe_geomean(rl_mean[valid] / rand_mean[valid])
     out.append({
         "id": "geomean_arnoldi_ratio_rl_over_rand",
-        "description": "Geometric mean of per-matrix Arnoldi mean ratio gmres_rl / rand_gmres "
-                       "(<1 means DQN uses fewer Arnoldi iterations on average)",
+        "description": f"Geometric mean of per-matrix Arnoldi mean ratio {m_b} / {m_a} "
+                       f"(<1 means {m_b} uses fewer Arnoldi iterations on average)",
         "method": "comparison",
         "value": arn_ratio,
         "units": "ratio",
         "slice": f"{int(valid.sum())} matrices where both methods fully converged AND both means > 0",
         "sample_size": int(valid.sum()),
-        "formula": "exp( mean( log(per_matrix.gmres_rl_arnoldi_mean / per_matrix.rand_gmres_arnoldi_mean) ) ), "
+        "formula": f"exp( mean( log(per_matrix.{m_b}_arnoldi_mean / per_matrix.{m_a}_arnoldi_mean) ) ), "
                    "filtered to rows where both means > 0",
         "interpretation":
-            f"DQN uses ~{(1 - arn_ratio) * 100:+.1f}% the Arnoldi count of randGMRES on average "
-            f"(geo-mean ratio = {arn_ratio:.3f}; values <1 favor DQN).",
+            f"{m_b} uses ~{(1 - arn_ratio) * 100:+.1f}% the Arnoldi count of {m_a} on average "
+            f"(geo-mean ratio = {arn_ratio:.3f}; values <1 favor {m_b}).",
     })
 
     return out
 
 
-# --------------------------------------------------------------------------- #
 # CSV writers
-# --------------------------------------------------------------------------- #
 
 def _write_csv(rows: list[dict], path: Path, fieldnames: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -621,11 +575,12 @@ def write_per_cell_csv(per_cell: list[dict], out_dir: Path) -> Path:
     return path
 
 
-def write_per_matrix_csv(per_matrix: list[dict], out_dir: Path) -> Path:
+def write_per_matrix_csv(per_matrix: list[dict], out_dir: Path,
+                         methods: tuple[str, str]) -> Path:
     base = ["matrix", "both_fully_converged",
             "rl_std_lower_than_rand", "rl_cv_lower_than_rand"]
     method_cols = []
-    for m in METHODS:
+    for m in methods:
         method_cols.extend([
             f"{m}_n_seeds", f"{m}_n_converged", f"{m}_n_capped",
             f"{m}_arnoldi_mean", f"{m}_arnoldi_std", f"{m}_arnoldi_cv",
@@ -646,9 +601,6 @@ def write_summary_csv(summary: list[dict], out_dir: Path) -> Path:
     return path
 
 
-# --------------------------------------------------------------------------- #
-# CLI
-# --------------------------------------------------------------------------- #
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -656,25 +608,34 @@ def main() -> None:
                         help="Path to the partial / full Peairs-style benchmark JSON.")
     parser.add_argument("--out-dir", type=str, default=str(DEFAULT_OUT),
                         help="Directory to write the three CSV outputs into.")
+    parser.add_argument("--method-a", type=str, default=DEFAULT_METHOD_A,
+                        help="JSON method key for the first stochastic method "
+                             "(default: rand_gmres). Override when benchmark.py "
+                             "emits suffixed names like rand_gmres_10_20.")
+    parser.add_argument("--method-b", type=str, default=DEFAULT_METHOD_B,
+                        help="JSON method key for the second stochastic method "
+                             "(default: gmres_rl).")
     args = parser.parse_args()
 
     json_path = Path(args.input).expanduser().resolve()
     out_dir = Path(args.out_dir).expanduser().resolve()
+    methods = (args.method_a, args.method_b)
 
     print(f"Streaming {json_path} ...")
-    per_cell = load_per_cell_records(json_path)
+    print(f"  comparing methods: {methods[0]!r} vs {methods[1]!r}")
+    per_cell = load_per_cell_records(json_path, methods)
     print(f"  collected {len(per_cell):,} (matrix, method, seed) cells")
 
     print("Aggregating to per-matrix statistics ...")
-    per_matrix = build_per_matrix_table(per_cell)
+    per_matrix = build_per_matrix_table(per_cell, methods)
     print(f"  {len(per_matrix)} matrices")
 
     print("Computing summary statistics ...")
-    summary = compute_summary_statistics(per_cell, per_matrix)
+    summary = compute_summary_statistics(per_cell, per_matrix, methods)
     print(f"  {len(summary)} summary rows")
 
     cell_csv = write_per_cell_csv(per_cell, out_dir)
-    matrix_csv = write_per_matrix_csv(per_matrix, out_dir)
+    matrix_csv = write_per_matrix_csv(per_matrix, out_dir, methods)
     summary_csv = write_summary_csv(summary, out_dir)
     print(f"\nwrote:")
     print(f"  {cell_csv}")

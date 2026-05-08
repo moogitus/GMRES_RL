@@ -1,23 +1,27 @@
 """
-train_sac.py
+Single-life SAC training driver for the AK-SLRL continuous-action env
+(akslrl_env.AKSLRLEnv). Used as the SAC baseline in §4.1 (Table 2) and
+the SAC reward ablation in §7.4 (Table 6). A fresh SAC agent is trained
+online during one solve per matrix.
 
-SAC training/evaluation script for the AK-SLRL paper-style continuous-action
-environment (control_env.AKSLRLEnv). Single-life RL: a fresh SAC agent is
-trained online during one GMRES(m) solve per matrix.
+Defaults follow the AK-SLRL paper as restated in §7.2 (Table 5):
+γ_SAC = 0.97, replay buffer min(n/2, 20000), automatic entropy tuning.
+Stable-baselines3 defaults are used for parameters the paper does not
+specify (lr 3e-4, batch 256, τ_polyak 0.005, target update every step,
+MLP [256, 256]).
 
-Mirrors train_dqn.py, with three differences:
-  - uses SAC (continuous action) instead of DQN (discrete)
-  - uses AKSLRLEnv (full residual observation, paper reward)
-  - adds .mat loader for SuiteSparse files
+Mirrors train_dqn.py but uses SAC over a continuous action and the
+AK-SLRL inverse-residual reward; also supports SuiteSparse .mat files.
 
-Run:
+Built on stable-baselines3 (https://github.com/DLR-RM/stable-baselines3).
+
+Examples:
     python train_sac.py
     python train_sac.py --matrix-names cavity05
     python train_sac.py --matrices-dir matrices
 """
 
 import argparse
-import gzip
 import io
 import json
 import tarfile
@@ -31,7 +35,17 @@ from scipy.sparse import csr_matrix, issparse
 from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import BaseCallback
 
-from control_env import AKSLRLEnv
+from akslrl_env import AKSLRLEnv
+from utils import (
+    _consistent_rhs,
+    _find_local_archive,
+    _first_existing,
+    _largest_matrix_member,
+    _load_mtx_file,
+    _recursive_candidates,
+    _validate_problem,
+    summarise_runs,
+)
 
 
 PAPER_COLLECTION = [
@@ -78,32 +92,9 @@ PAPER_COLLECTION = [
 ]
 
 
-def _largest_matrix_member(tar: tarfile.TarFile):
-    members = [
-        member for member in tar.getmembers()
-        if member.name.endswith(".mtx") and not member.name.endswith("_b.mtx")
-    ]
-    if not members:
-        raise ValueError("No matrix .mtx file found.")
-    return max(members, key=lambda member: member.size)
-
-
 def _rhs_member(tar: tarfile.TarFile):
     members = [member for member in tar.getmembers() if member.name.endswith("_b.mtx")]
     return max(members, key=lambda member: member.size) if members else None
-
-
-def _flatten_rhs(data) -> np.ndarray:
-    arr = np.asarray(data, dtype=np.float64)
-    if arr.ndim == 2 and 1 in arr.shape:
-        arr = arr.reshape(-1)
-    return np.asarray(arr, dtype=np.float64).reshape(-1)
-
-
-def _load_mtx_file(path: Path):
-    opener = gzip.open if path.name.endswith(".gz") else open
-    with opener(path, "rb") as handle:
-        return mmread(io.BytesIO(handle.read()))
 
 
 def _load_mat_file(path: Path):
@@ -120,54 +111,6 @@ def _load_mat_file(path: Path):
         if b_field.size > 0:
             b = np.asarray(b_field, dtype=np.float64).reshape(-1)
     return A, b
-
-
-def _validate_problem(name: str, A, b):
-    A = csr_matrix(A.astype(np.float64))
-    b = _flatten_rhs(b)
-    if A.shape[0] != A.shape[1]:
-        raise ValueError(f"{name}: matrix is not square")
-    if b.shape[0] != A.shape[0]:
-        raise ValueError(f"{name}: RHS dimension mismatch")
-    return A, b
-
-
-def _consistent_rhs(A) -> np.ndarray:
-    x_true = np.ones(A.shape[1], dtype=np.float64)
-    return np.asarray(A @ x_true, dtype=np.float64).reshape(-1)
-
-
-def _first_existing(paths):
-    for path in paths:
-        if path.exists():
-            return path
-    return None
-
-
-def _recursive_candidates(root: Path, patterns):
-    candidates = []
-    seen = set()
-    for pattern in patterns:
-        for path in sorted(root.rglob(pattern)):
-            resolved = path.resolve()
-            if resolved not in seen:
-                seen.add(resolved)
-                candidates.append(path)
-    return candidates
-
-
-def _find_local_archive(name: str, matrices_dir: Path):
-    direct = _first_existing([
-        matrices_dir / f"{name}.tar.gz",
-        matrices_dir / f"{name}.tgz",
-        matrices_dir / name / f"{name}.tar.gz",
-        matrices_dir / name / f"{name}.tgz",
-    ])
-    if direct is not None:
-        return direct
-
-    matches = _recursive_candidates(matrices_dir, [f"{name}.tar.gz", f"{name}.tgz"])
-    return matches[0] if matches else None
 
 
 def _find_local_mat(name: str, matrices_dir: Path):
@@ -279,6 +222,10 @@ def load_problem(config: dict, matrices_dir: Path, force_consistent_rhs: bool = 
     return _validate_problem(name, A, b)
 
 
+# sb3 callback that records absolute residual norms (and relative norms
+# once b_norm is set) and chosen m at every env step. AKSLRLEnv emits
+# absolute ||r||, so divide by ||b|| here to align with the relative-
+# residual tolerance used elsewhere
 class _StopOnDone(BaseCallback):
     def __init__(self):
         super().__init__()
@@ -323,7 +270,7 @@ def run_sac(A, b, args, seed):
         include_log_residual_in_state=args.include_log_residual,
     )
 
-    # AK-SLRL paper: replay buffer = half matrix size, capped at 20,000.
+    # AK-SLRL replay buffer = min(n/2, 20000) (§7.2)
     if args.buffer_size is None:
         buffer_size = int(min(max(A.shape[0] // 2, 1), 20_000))
     else:
@@ -389,25 +336,6 @@ def run_sac(A, b, args, seed):
     }
 
 
-def summarise_runs(runs):
-    def _avg(key):
-        return float(np.mean([run[key] for run in runs]))
-
-    def _std(key):
-        return float(np.std([run[key] for run in runs]))
-
-    return {
-        "convergence_rate": _avg("converged"),
-        "arnoldi_mean": _avg("total_arnoldi"),
-        "arnoldi_std": _std("total_arnoldi"),
-        "time_mean": _avg("elapsed_seconds"),
-        "time_std": _std("elapsed_seconds"),
-        "cycles_mean": _avg("cycles_to_tol"),
-        "final_residual_norm_mean": _avg("final_residual_norm"),
-        "final_relative_residual_norm_mean": _avg("final_relative_residual_norm"),
-    }
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--matrices-dir", type=str, default="matrices")
@@ -429,18 +357,10 @@ def main():
                         help="Append log(||r||) to the observation (default: on).")
     parser.add_argument("--no-log-residual", dest="include_log_residual",
                         action="store_false")
-    # SAC hyperparameters.
-    #   Paper-specified (Keramati & Hamdullahpur 2025, sec. 3):
-    #     gamma = 0.97
-    #     buffer_size = min(n // 2, 20_000)   ("short replay buffer")
-    #     ent_coef = 'auto'                   ("high rate of exploration at the beginning")
-    #   Not specified by the paper -> use stable_baselines3 SAC defaults:
-    #     learning_rate = 3e-4
-    #     learning_starts = 100
-    #     batch_size = 256
-    #     tau = 0.005
-    #     target_update_interval = 1
-    #     net_arch = [256, 256]
+    # SAC hyperparameters. Paper-specified (Keramati & Hamdullahpur 2025):
+    # gamma=0.97, buffer_size=min(n//2, 20000), ent_coef='auto'. Everything
+    # else falls back to stable-baselines3 SAC defaults (lr 3e-4, batch 256,
+    # tau 0.005, target update every step, MLP [256, 256]).
     parser.add_argument("--gamma", type=float, default=0.97,
                         help="Paper: 0.97.")
     parser.add_argument("--learning-rate", type=float, default=3e-4,
@@ -454,16 +374,16 @@ def main():
     parser.add_argument("--tau", type=float, default=0.005,
                         help="SB3 SAC default; paper does not specify.")
     parser.add_argument("--ent-coef", type=str, default="auto",
-                        help="Paper: 'auto' (yields the high initial exploration described in sec. 3).")
+                        help="Paper: 'auto' for automatic entropy tuning.")
     parser.add_argument("--target-update-interval", type=int, default=1,
                         help="SB3 SAC default; paper does not specify.")
     parser.add_argument("--net-arch", type=int, nargs="+", default=[256, 256],
                         help="Hidden-layer widths for actor/critic MLPs. SB3 SAC default.")
     parser.add_argument("--device", type=str, default="cpu")
-    parser.add_argument("--out", type=str, default="logs/train_sac_collection.json")
+    parser.add_argument("--out", type=str, default="results/train_sac_collection.json")
     args = parser.parse_args()
 
-    # Allow string-or-float ent_coef without making argparse choke on 'auto'.
+    # accept either 'auto' or a float for ent_coef
     try:
         args.ent_coef = float(args.ent_coef)
     except ValueError:

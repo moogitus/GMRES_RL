@@ -1,67 +1,37 @@
 """
-compute_epic_rewards.py
-=======================
+EPIC reward-distance analysis on synthetic 1D convection-diffusion coverage
+(§3.3, §7.3, Table 1). EPIC (Gleave et al., ICLR 2021) compares reward
+functions on a fixed coverage distribution after canonicalization, so it
+is invariant to positive rescaling and potential-based shaping (PBRS).
 
-EPIC (Equivalent-Policy Invariant Comparison) distance between reward functions
-for the GMRES(m) + single-life RL project.
+Reward variants compared:
+  - "original"     R = c_te/||r_k|| + (||r_{k-1}|| - ||r_k||)   [Keramati & Hamdullahpur 2025]
+  - "shaped"       R = -λm + log||r_{k-1}|| - γ·log||r_k||      [naive log-PBRS, unbounded Φ]
+  - "pbrs"         R = -λm + log(max(||r_t||, τ)/τ)
+                       - γ·log(max(||r_{t+1}||, τ)/τ)            [τ-clamped PBRS, §3.2]
+  - "ref-linear"   reference penalty -m
+  - "ref-quadratic" reference penalty -m²
 
-Imports from src/env.py (the canonical environment), which implements three
-reward types:
-  - "original"  : R = cte/||r_k|| + (||r_{k-1}|| - ||r_k||)  [Keramati & Hamdullahpura 2025]
-  - "shaped"    : R = -λm + log||r_{k-1}|| - γ·log||r_k||     [naive log-PBRS, unbounded Φ]
-  - "pbrs"      : R = -λm + log(max(||r_t||,τ)/τ)             [τ-clamped PBRS, satisfies
-                        - γ·log(max(||r_{t+1}||,τ)/τ)          Ng et al. 1999 exactly]
+Each reward optionally adds a sparse convergence bonus B·1{ρ_i < τ ≤ ρ_{i-1}}
+controlled by --convergence-bonus.
 
-Mathematical background
------------------------
-Given a reward R(s, a, s') and discount gamma, the *canonicalized* reward is:
+EPIC canonicalizes each reward and reports the Pearson distance
+    D_EPIC(R_A, R_B) = sqrt( (1 - corr(C(R_A), C(R_B))) / 2 )  ∈ [0, 1].
+A value of 0 means the rewards are equivalent up to positive rescaling
+and PBRS on the sampled coverage. Bootstrap CIs are obtained by resampling
+transitions with replacement.
 
-    C(R)(s, a, s') = R(s, a, s')
-        + E_{A~D_A, S~D_S, S'~D_S}[
-              gamma * R(s', A, S')
-            - R(s,   A, S')
-            - gamma * R(S,  A, S')
-          ]
+τ-clamping detail (§3.2): the naive potential Φ(s) = -log||r|| diverges
+to +∞ as ||r|| → 0. Clamping to Φ_τ(s) = -log(max(||r||, τ)/τ) keeps Φ
+non-positive and zero exactly at convergence, so the shaping term cannot
+inject a spurious unbounded bonus.
 
-This canonicalization removes any potential-based shaping component while
-preserving the policy-equivalence class (Gleave et al., ICLR 2021).
+Transition representation: each row is (prev_norm, m, curr_norm) where
+prev_norm = ||r_t||, m is the chosen restart length, and
+curr_norm = ||r_{t+1}||.
 
-The EPIC distance is then the Pearson distance between canonicalized rewards
-evaluated on the same set of transitions:
-
-    D_EPIC(R_A, R_B) = sqrt( (1 - corr(C(R_A), C(R_B))) / 2 )
-
-Values are in [0, 1]; 0 means the two rewards are equivalent up to PBRS.
-
-Transition representation
---------------------------
-A state is represented solely by the residual norm ||r||.  A transition is:
-
-    (prev_norm, m, curr_norm)
-
-where prev_norm = ||r_t||, m is the GMRES restart parameter chosen by the agent,
-and curr_norm = ||r_{t+1}||.
-
-τ-clamped PBRS (the "pbrs" reward in src/env.py)
---------------------------------------------------
-The naive potential Φ(s) = -log(||r||) is unbounded: as ||r|| → 0, Φ → +∞.
-At the terminal state ||r|| < τ the PBRS term γΦ(s_T) is enormous, injecting
-a spurious massive bonus that leaks backward through Bellman updates.
-
-The τ-clamped potential fixes this:
-
-    Φ_τ(s) = -log( max(||r||, τ) / τ )
-
-Properties that make it satisfy Ng et al. (1999) shaping conditions exactly:
-  1. Φ_τ(s) ≤ 0 always (since max(||r||,τ)/τ ≥ 1)
-  2. Φ_τ(s) = 0 exactly at convergence (||r|| ≤ τ => max(||r||,τ)/τ = 1)
-  3. Φ_τ is bounded and smooth everywhere above τ
-
-EPIC expects D(pbrs, naive_log_shaped) = 0, and D(pbrs, base_work) = 0
-because EPIC removes ALL PBRS simultaneously — the clamping changes Φ but
-not the policy-equivalence class.  The real finding is D(original, pbrs) ≈ 0.72,
-showing the paper's reward and our shaped reward lie in fundamentally different
-policy-equivalence classes.
+Outputs to epic/results/: epic_distance_matrix*.csv, epic_bootstrap_*.csv,
+and the transition coverage CSV.
 """
 
 from __future__ import annotations
@@ -72,18 +42,18 @@ import os
 import sys
 import warnings
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
-# Make src/ importable regardless of working directory.
+# make src/ importable regardless of cwd
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-# ---------------------------------------------------------------------------
-# Config dataclass
-# ---------------------------------------------------------------------------
+
+# config dataclass
 
 @dataclass
 class RewardCfg:
@@ -95,10 +65,7 @@ class RewardCfg:
     eps: float = 1e-12
 
 
-# ---------------------------------------------------------------------------
-# Reward functions
-# ---------------------------------------------------------------------------
-
+# reward functions
 def original_reward(prev_norm: float, m: int, curr_norm: float, cfg: RewardCfg) -> float:
     """cte/(curr+eps) + (prev-curr), plus optional convergence bonus."""
     r = cfg.cte / (curr_norm + cfg.eps) + (prev_norm - curr_norm)
@@ -187,10 +154,7 @@ REWARD_REGISTRY: dict[str, Callable] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Vectorized reward evaluation helpers
-# ---------------------------------------------------------------------------
-
+# vectorized reward evaluation
 def _bonus_mask(prev: np.ndarray, curr: np.ndarray, cfg: RewardCfg) -> np.ndarray:
     return (curr < cfg.tolerance) & (prev >= cfg.tolerance)
 
@@ -290,10 +254,7 @@ def eval_reward_vec(
     )
 
 
-# ---------------------------------------------------------------------------
-# Transition collection
-# ---------------------------------------------------------------------------
-
+# transition collection
 @dataclass
 class Transition:
     prev_norm: float
@@ -318,8 +279,8 @@ def collect_transitions(
     Instantiate AKSLRLEnv on convdiff matrices and run random rollouts.
     coverage: 'random' | 'fixed20' | 'mixed'
     """
-    from src.matrices import make_convdiff_1d_sparse
-    from src.env import AKSLRLEnv
+    from src.make_convdiff_matrices import make_convdiff_1d_sparse
+    from src.akslrl_env import AKSLRLEnv
 
     transitions: List[Transition] = []
 
@@ -406,10 +367,7 @@ def _sample_action(coverage: str, rng: np.random.Generator) -> float:
     return float(rng.uniform(0.0, 1.0))
 
 
-# ---------------------------------------------------------------------------
 # EPIC canonicalization
-# ---------------------------------------------------------------------------
-
 def canonicalize(
     reward_fn: Callable,
     eval_prev: np.ndarray,       # (N,)
@@ -481,10 +439,7 @@ def canonicalize(
     return base + correction
 
 
-# ---------------------------------------------------------------------------
 # EPIC distance
-# ---------------------------------------------------------------------------
-
 def pearson_distance(a: np.ndarray, b: np.ndarray) -> float:
     """sqrt((1 - corr(a,b)) / 2), clipped to [0,1]."""
     std_a = np.std(a)
@@ -524,10 +479,7 @@ def bootstrap_epic(
     return point, float(np.mean(samples_arr)), float(np.std(samples_arr)), ci_lo, ci_hi
 
 
-# ---------------------------------------------------------------------------
-# Output helpers
-# ---------------------------------------------------------------------------
-
+# output helpers
 def print_transition_stats(transitions: List[Transition], args) -> None:
     prev_norms = np.array([t.prev_norm for t in transitions])
     curr_norms = np.array([t.curr_norm for t in transitions])
@@ -579,7 +531,7 @@ def print_interpretation(names: List[str], matrix: np.ndarray) -> None:
     )
     print(
         f"  D(pbrs, base_work) = {d('pbrs','base_work'):.4f}   [PBRS sanity check]\n"
-        f"    -> Should be 0 when convergence_bonus=0.  Gleave et al. Prop 4.2 guarantees\n"
+        f"    -> Should be 0 when convergence_bonus=0.  Gleave et al. (2021) prove\n"
         f"       EPIC is invariant to potential-based shaping, so the τ-clamped PBRS\n"
         f"       (Φ_τ added to -λm) must canonicalize to the same reward as -λm alone.\n"
         f"       Nonzero here signals a canonicalization bug or non-PBRS component.\n"
@@ -605,10 +557,7 @@ def print_interpretation(names: List[str], matrix: np.ndarray) -> None:
     )
 
 
-# ---------------------------------------------------------------------------
 # CSV save helpers
-# ---------------------------------------------------------------------------
-
 def save_distance_matrix_csv(names: List[str], matrix: np.ndarray, path: str) -> None:
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
@@ -640,10 +589,6 @@ def save_transitions_csv(transitions: List[Transition], path: str) -> None:
     print(f"  Saved transitions -> {path}")
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Compute EPIC distances between GMRES reward functions."
@@ -672,8 +617,11 @@ def build_parser() -> argparse.ArgumentParser:
     # Output
     p.add_argument("--save-transitions", type=str, default=None,
                    help="Path to save transitions CSV")
-    p.add_argument("--out-matrix", type=str, default="epic_distance_matrix.csv")
-    p.add_argument("--out-bootstrap", type=str, default="epic_bootstrap_summary.csv")
+    _SCRIPT_DIR = Path(__file__).resolve().parent
+    p.add_argument("--out-matrix", type=str,
+                   default=str(_SCRIPT_DIR / "results" / "epic_distance_matrix.csv"))
+    p.add_argument("--out-bootstrap", type=str,
+                   default=str(_SCRIPT_DIR / "results" / "epic_bootstrap_summary.csv"))
     return p
 
 

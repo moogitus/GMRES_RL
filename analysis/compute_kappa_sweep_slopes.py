@@ -1,11 +1,8 @@
 """
-analysis/compute_kappa_sweep_slopes.py
-
-Reads analysis/results/kappa_sweep.json and writes a companion CSV with the
-log-log slope of mean total Arnoldi iterations against the matrix condition
-number for each method, plus a bootstrap 95% CI on each slope.
-
-Output: analysis/results/kappa_sweep_slopes.csv
+Log-log slope of mean total Arnoldi iterations vs. κ_2(A) for each
+method on the κ-sweep (§4.3, slopes quoted in the discussion of Figure 1).
+Reads kappa_sweep.json, fits a power law to each method's per-matrix
+mean, and writes a companion CSV with bootstrap 95% CIs.
 """
 
 from __future__ import annotations
@@ -17,8 +14,8 @@ from pathlib import Path
 import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-INPUT = REPO_ROOT / "analysis" / "results" / "kappa_sweep.json"
-OUTPUT = REPO_ROOT / "analysis" / "results" / "kappa_sweep_slopes.csv"
+INPUT = REPO_ROOT / "results" / "kappa_sweep" / "kappa_sweep.json"
+OUTPUT = REPO_ROOT / "results" / "kappa_sweep" / "kappa_sweep_slopes.csv"
 
 METHODS = [
     ("gmres20_seeds",   "gmres20",    "GMRES(20)"),
@@ -44,7 +41,7 @@ def main(n_bootstrap: int = 2000, seed: int = 0) -> None:
         y = np.log10(means[valid])
         slope, intercept = np.polyfit(x, y, 1)
 
-        # Percentile-bootstrap CI by resampling matrices with replacement.
+        # percentile-bootstrap CI by resampling matrices with replacement
         boot_slopes = np.empty(n_bootstrap, dtype=np.float64)
         for i in range(n_bootstrap):
             idx = rng.integers(0, x.size, size=x.size)

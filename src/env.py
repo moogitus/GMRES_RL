@@ -1,39 +1,38 @@
 """
-Discrete-action GMRES environment with the shaped reward. Does not include full residual vector.
+Discrete-action GMRES(m) environment.
 
-Observation:
-  - last k restart choices (normalized)
-  - last k log relative residual norms
+One env step is one GMRES(m) restart cycle on a fixed linear system Ax=b.
+The agent picks a restart length m in {1, ..., m_max}; the env runs the
+cycle, recomputes the residual, and emits the PBRS shaped reward described
+in the paper. The observation is a 2k vector of the last k normalized
+restart choices and the last k log relative-residual norms (no full
+residual vector, so the controller cost is O(1) in n).
 
-Action:
-  - index into restart values 1..m_max
+Built on top of gymnasium (https://github.com/Farama-Foundation/Gymnasium).
 """
 
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 
-class GMRESEnv(gym.Env):
-    """
-    Gym environment for controlling GMRES(m) restart values on a fixed linear system Ax=b.
 
-    The agent observes the last k residual norms and restart choices, but not the full
-    residual vector, and selects a discrete restart value m in {1, ..., m_max}.
-    GMRES(m) is run for one restart cycle, and the reward is [to be determined]
-    """
+# discrete-action GMRES(m) gym env. agent picks m per restart cycle on a
+# fixed Ax=b system; observation is a rolling history of recent m and
+# log-relative-residual norms.
+class GMRESEnv(gym.Env):
 
     def __init__(
         self,
         A,
         b,
         m_max=20,
-        tolerance=1e-5,
+        tolerance=1e-6,
         absolute_tolerance=1e-12,
-        max_cycles=200,
+        max_cycles=10000,
         history_length=5,
-        lambda_work=0.0124,
-        gamma_shape=0.9695,
-        convergence_bonus=22.09,
+        lambda_work=0.01,
+        gamma_shape=0.925,
+        convergence_bonus=9.0,
     ):
         m_max = int(m_max)
         if m_max < 1:
@@ -62,15 +61,13 @@ class GMRESEnv(gym.Env):
         self.gamma_shape = float(gamma_shape)
         self.convergence_bonus = float(convergence_bonus)
 
-        # History-state config
         self.action_ms = tuple(range(1, m_max + 1))
         self.total_arnoldi = 0
 
-        # discrete action over restart values 1..m_max.
+        # discrete action over restart values 1..m_max
         self.action_space = spaces.Discrete(len(self.action_ms))
 
-        # Observation:
-        #   [last k restart choices / m_max, last k log relative residual norms]
+        # obs = [last k restart choices / m_max, last k log relative residual norms]
         self.observation_space = spaces.Box(
             low=np.concatenate(
                 [
@@ -87,17 +84,13 @@ class GMRESEnv(gym.Env):
             dtype=np.float32,
         )
 
-        # Runtime state
+        # runtime state, populated on reset()
         self.x = None
         self.current_residual_vector = None
         self.current_residual_norm = None
         self.cycle_count = 0
         self.restart_history = None
         self.residual_history = None
-
-    # ------------------------------------------------------------------ #
-    # Gym API
-    # ------------------------------------------------------------------ #
 
     def reset(self, seed=None, options=None):
         gym.Env.reset(self, seed=seed)
@@ -129,7 +122,7 @@ class GMRESEnv(gym.Env):
         m = int(self.action_ms[action_idx])
         prev_norm = self.current_residual_norm
 
-        # Early-convergence guard: if we're already at tolerance, terminate cleanly.
+        # if we're already at tolerance, terminate cleanly with zero reward
         prev_rel = self._relative_residual(prev_norm)
         if self._is_converged(prev_norm, prev_rel):
             obs = self._build_observation()
@@ -141,7 +134,7 @@ class GMRESEnv(gym.Env):
                 "total_arnoldi": self.total_arnoldi,
             }
 
-        # Run one GMRES(m) restart cycle.
+        # one GMRES(m) restart cycle
         self.x, self.current_residual_vector, actual_m = self._execute_gmres_cycle(
             self.x, self.current_residual_vector, m
         )
@@ -149,19 +142,18 @@ class GMRESEnv(gym.Env):
         self.cycle_count += 1
         self.total_arnoldi += actual_m
 
-        # Reward
+        # PBRS shaped reward (§3.2)
         curr_rel = self._relative_residual(self.current_residual_norm)
         reward = self._compute_reward(
             prev_norm, prev_rel, self.current_residual_norm, curr_rel, m
         )
 
-        # Update k-step history state.
+        # roll the k-step history forward (§3.1, §4.1)
         self.restart_history = np.roll(self.restart_history, -1)
         self.restart_history[-1] = np.float32(m / self.m_max)
         self.residual_history = np.roll(self.residual_history, -1)
         self.residual_history[-1] = np.float32(np.log(max(curr_rel, 1e-12)))
 
-        # Termination / truncation
         terminated = bool(self._is_converged(self.current_residual_norm, curr_rel))
         truncated = bool(self.cycle_count >= self.max_cycles) and not terminated
 
@@ -178,30 +170,17 @@ class GMRESEnv(gym.Env):
         }
         return obs, float(reward), terminated, truncated, info
 
-    # ------------------------------------------------------------------ #
-    # Reward
-    # ------------------------------------------------------------------ #
-
+    # potential-based shaped reward (§3.2). potential is
+    # phi_tau(rho) = -log(max(rho, tau) / tau), where rho = ||r||/||b||,
+    # so phi <= 0 everywhere and = 0 at convergence. shaping is
+    # gamma * phi(s_{t+1}) - phi(s_t), giving
+    #   R_t = -lambda_work * m_t
+    #         + log(max(rho_t, tau) / tau)
+    #         - gamma_shape * log(max(rho_{t+1}, tau) / tau)
+    #         + convergence_bonus * 1{rho_{t+1} < tau <= rho_t}.
+    # Ng, Harada, Russell (1999) guarantees this PBRS term preserves the
+    # optimal policy when gamma_shape matches the DQN discount.
     def _compute_reward(self, prev_norm, prev_rel, curr_norm, curr_rel, m):
-        """
-        Potential-based shaped reward (Ng, Harada, Russell 1999) with potential
-
-            Phi_tau(s) = -log( max(rho, tau) / tau )   <=  0,
-
-        where rho = ||r|| / ||b|| is the relative residual and tau is the
-        convergence tolerance on rho. Phi is non-positive everywhere and
-        equals 0 exactly at convergence (rho <= tau).
-
-        The shaping term is gamma * Phi(s_{t+1}) - Phi(s_t), so
-
-            R_t = -lambda_work * m_t
-                  + log( max(rho_t,     tau) / tau )
-                  - gamma_shape * log( max(rho_{t+1}, tau) / tau )
-                  + convergence_bonus * 1{rho_{t+1} < tau <= rho_t}.
-
-        Because this is a true PBRS term with the same gamma the agent uses
-        for value bootstrapping, it preserves the optimal policy.
-        """
         tau = self.tolerance
         log_prev = np.log(max(prev_rel, tau) / tau)
         log_curr = np.log(max(curr_rel, tau) / tau)
@@ -219,66 +198,51 @@ class GMRESEnv(gym.Env):
             or float(residual_norm) < self.absolute_tolerance
         )
 
-    # ------------------------------------------------------------------ #
-    # Observation
-    # ------------------------------------------------------------------ #
-
+    # rolling k-step history observation (no full residual vector; cf. §4.1)
     def _build_observation(self):
-        """Return the rolling k-step history observation."""
         return np.concatenate(
             [self.restart_history, self.residual_history],
             dtype=np.float32,
         )
 
-    # ------------------------------------------------------------------ #
-    # GMRES(m) core
-    # ------------------------------------------------------------------ #
-
+    # one GMRES(m) restart cycle starting from x_current with
+    # r_current = b - A x_current. returns (x_next, r_next, actual_m), where
+    # actual_m is the number of Arnoldi steps actually performed before
+    # reaching m or breaking down early.
     def _execute_gmres_cycle(self, x_current, r_current, m):
-        """
-        Run one restart cycle of GMRES(m) starting from x_current with residual
-        r_current = b - A x_current. Returns updated
-        `(x_next, r_next, actual_m)`, where `actual_m` is the number of Arnoldi
-        steps performed before either reaching `m` or breaking down early.
-        """
         V, H, beta, actual_m, breakdown = self._arnoldi_iteration(
             self.A, r_current, m, tol=1e-14
         )
 
-        # If the initial residual was essentially zero, Arnoldi signals via
-        # actual_m == 0. Nothing to do.
+        # essentially-zero initial residual: Arnoldi signals via actual_m == 0
         if actual_m == 0:
             return x_current, r_current, 0
 
-        # Solve min_y || beta * e_1 - H y ||_2.
+        # least-squares projection: min_y || beta * e_1 - H y ||_2
         e1 = np.zeros(actual_m + 1)
         e1[0] = beta
         y, *_ = np.linalg.lstsq(H, e1, rcond=None)
 
-        # Update iterate using the Arnoldi basis.
         x_next = x_current + V[:, :actual_m] @ y
 
-        # Recompute residual explicitly for numerical accuracy.
+        # recompute residual explicitly; cheaper than tracking it through
+        # the projection and avoids basis-orthogonality drift
         r_next = self.b - self.A @ x_next
         return x_next, r_next, actual_m
 
+    # up to m steps of Arnoldi iteration starting from r. modified
+    # Gram-Schmidt as in (§2.1, eq. 1). returns:
+    #   V : (n, actual_m + 1) orthonormal basis
+    #   H : (actual_m + 1, actual_m) upper Hessenberg
+    #   beta : ||r||
+    #   actual_m : steps completed
+    #   breakdown : True if early termination due to a near-zero direction
     @staticmethod
     def _arnoldi_iteration(A, r, m, tol=1e-14):
-        """
-        Perform up to m steps of Arnoldi iteration starting from r.
-
-        Returns
-        -------
-        V : (n, actual_m + 1) orthonormal basis
-        H : (actual_m + 1, actual_m) upper Hessenberg
-        beta : float, ||r||
-        actual_m : int, number of steps completed
-        breakdown : bool, True if early termination due to near-zero direction
-        """
         n = r.shape[0]
         beta = float(np.linalg.norm(r))
 
-        # If residual is already tiny, return empty Arnoldi output rather than raise.
+        # already-tiny residual: return empty output rather than raise
         if beta < tol:
             V = np.zeros((n, 1))
             H = np.zeros((1, 0))
@@ -295,7 +259,7 @@ class GMRESEnv(gym.Env):
             vj = V[:, j]
             w = A(vj) if callable(A) else A @ vj
 
-            # Modified Gram-Schmidt
+            # modified Gram-Schmidt
             for i in range(j + 1):
                 H[i, j] = np.dot(V[:, i], w)
                 w = w - H[i, j] * V[:, i]

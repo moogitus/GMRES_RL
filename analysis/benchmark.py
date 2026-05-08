@@ -1,12 +1,18 @@
 """
-Run a comprehensive benchmark over the 103-matrix test suite using:
-  - GMRES(20)
-  - GMRES(60)
-  - angleGMRES
-  - randGMRES
-  - DQN-controlled GMRES_RL (history length 5, m_max 20 by default)
+Peairs-style §4.2 / §7.7 benchmark across the 155-matrix SuiteSparse suite.
 
-All methods use the consistent RHS b = A @ 1 and a common total-Arnoldi budget.
+Methods compared:
+  - GMRES(20), GMRES(60)         (deterministic, fixed restart)
+  - angle_gmres                  (deterministic, paper-style angle schedule)
+  - randGMRES                    (uniform random m per cycle)
+  - DQN-controlled GMRES(m)      (history length 5, m_max 20)
+
+All methods use b = A·1 and a shared 10⁵-Arnoldi budget; stochastic
+methods run 5 independent seeds. Writes raw per-(matrix, method, seed)
+runs to results/peairs_155/full_run.json — input to analyze_benchmark.py
+and compute_variance_statistics.py.
+
+Built on stable-baselines3 (https://github.com/DLR-RM/stable-baselines3).
 """
 
 import argparse
@@ -35,8 +41,9 @@ from env import GMRESEnv
 from train_dqn import discover_matrix_names, load_problem
 
 
+# GMRES env subclass that accepts an explicit action menu (e.g. {5,10,15,20})
+# and enforces a total-Arnoldi budget across the whole episode
 class BudgetedGMRESEnv(GMRESEnv):
-    """GMRES environment with an optional custom action menu and Arnoldi cap."""
 
     def __init__(
         self,
@@ -324,10 +331,10 @@ def run_angle_gmres(
             ratio = curr_rel / prev_rel
             current_m = ordered[state["idx"]]
 
-            # Paper's alpha-GMRES rule:
-            # - if convergence is very good, keep the same restart
-            # - if convergence is poor, reset to m_max
-            # - otherwise decrement by d until m_min, then reset to m_max
+            # angle_gmres / alpha-GMRES schedule:
+            # - if the residual ratio is small (good progress), hold m fixed
+            # - if it's large (poor progress), reset to m_max
+            # - otherwise decrement by `decrement` down to m_min, then reset
             if ratio < beta_small:
                 next_m = current_m
             elif ratio > beta_large:
@@ -694,7 +701,7 @@ def _run_single_matrix(name: str, matrices_dir: str, args_dict: dict) -> tuple[s
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--matrices-dir", type=str, default="matrices/test")
+    parser.add_argument("--matrices-dir", type=str, default="matrices/full_benchmark")
     parser.add_argument("--matrix-names", nargs="+", default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--tolerance", type=float, default=1e-6)
@@ -745,7 +752,7 @@ def parse_args():
     parser.add_argument("--dqn-history-length", type=int, default=5)
     parser.add_argument("--dqn-gamma", type=float, default=0.925)
     parser.add_argument("--dqn-lambda-work", type=float, default=0.01)
-    parser.add_argument("--dqn-convergence-bonus", type=float, default=10)
+    parser.add_argument("--dqn-convergence-bonus", type=float, default=9)
     parser.add_argument("--dqn-learning-rate", type=float, default=3e-3)
     parser.add_argument("--dqn-buffer-size", type=int, default=10_000)
     parser.add_argument("--dqn-learning-starts", type=int, default=25)
@@ -757,7 +764,7 @@ def parse_args():
     parser.add_argument(
         "--out",
         type=str,
-        default="logs/peairs_style_159_suite.json",
+        default="results/peairs_155/full_run.json",
     )
     return parser.parse_args()
 

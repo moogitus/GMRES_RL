@@ -1,12 +1,13 @@
 """
-compare_gmres_slrl.py
+Per-matrix runner for the §4.1 six-matrix AK-SLRL comparison (Table 2 +
+Figure 2). Runs DQN, SAC (AK-SLRL baseline), and fixed-restart GMRES(20)
+on the six matrices for five seeds each and emits per-matrix convergence
+traces (relative residual vs cumulative Arnoldi steps and wall-clock time).
 
-Run DQN, SAC, and fixed GMRES(20) on a six-matrix hard benchmark and generate
-per-matrix convergence plots with:
-  - y-axis: relative residual norm
-  - x-axis: cumulative Arnoldi steps or wall-clock time
+RHS is b = A·1 (§4.2); writes traces and aggregate JSON to
+results/slrl_six_matrix/.
 
-The benchmark always uses the consistent RHS b = A @ 1.
+Built on stable-baselines3 (https://github.com/DLR-RM/stable-baselines3).
 """
 
 import argparse
@@ -22,7 +23,7 @@ from scipy.sparse import csr_matrix
 from stable_baselines3 import DQN, SAC
 from stable_baselines3.common.callbacks import BaseCallback
 
-from control_env import AKSLRLEnv
+from akslrl_env import AKSLRLEnv
 from env import GMRESEnv
 from train_dqn import load_problem as load_dqn_problem
 
@@ -78,9 +79,9 @@ def _sac_args(args, b_norm: float) -> SimpleNamespace:
     )
 
 
+# sb3 callback that records a full convergence trace (residual, m, time)
+# and stops learning once the solve terminates
 class _TraceOnDone(BaseCallback):
-    """Capture a full convergence trace and stop learning once the solve ends."""
-
     def __init__(self, b_norm: float, relative_from_info: bool):
         super().__init__()
         self.b_norm = max(float(b_norm), 1e-12)
@@ -373,7 +374,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--matrices-dir",
         type=str,
-        default=str(repo_root / "matrices" / "six_matrix_benchmark"),
+        default=str(repo_root / "matrices" / "slrl_benchmark_matrices"),
     )
     parser.add_argument(
         "--matrix-names",
@@ -417,17 +418,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--out-json",
         type=str,
-        default=str(repo_root / "src" / "logs" / "six_matrix_convergence.json"),
+        default=str(repo_root / "results" / "slrl_six_matrix" / "results.json"),
     )
     parser.add_argument(
         "--out-dir-arnoldi",
         type=str,
-        default=str(repo_root / "src" / "logs" / "six_matrix_convergence_arnoldi"),
+        default=str(repo_root / "results" / "slrl_six_matrix" / "arnoldi"),
     )
     parser.add_argument(
         "--out-dir-wallclock",
         type=str,
-        default=str(repo_root / "src" / "logs" / "six_matrix_convergence_wallclock"),
+        default=str(repo_root / "results" / "slrl_six_matrix" / "wallclock"),
     )
     return parser.parse_args()
 

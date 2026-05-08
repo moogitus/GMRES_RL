@@ -1,0 +1,22 @@
+# Core numerics
+numpy>=1.24
+scipy>=1.10
+
+# RL stack
+gymnasium>=0.29
+stable-baselines3>=2.0
+torch>=2.0
+
+# Plotting + tabular analysis
+matplotlib>=3.7
+pandas>=2.0
+
+# Streaming JSON (analysis of the 800 MB benchmark dump)
+ijson>=3.0
+
+# Hyperparameter search
+optuna>=3.0
+tqdm>=4.65
+
+# Statistically-rigorous RL benchmarking (IQM, PoI, performance profiles)
+rliable>=1.0

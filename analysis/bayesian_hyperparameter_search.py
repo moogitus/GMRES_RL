@@ -1,26 +1,24 @@
 """
-analysis/bayesian_hyperparameter_search.py
+Bayesian hyperparameter search (Optuna TPE) over the three reward-shaping
+coefficients in the PBRS reward of §3.2 (Appendix 7.2). Sweeps a single
+study aggregated across the 16-matrix HPO suite (matrices/hpo_matrices/),
+minimizing mean total Arnoldi steps to convergence; non-convergent solves
+are penalized by max_cycles * m_max so any convergent setting strictly
+dominates any non-convergent one (Table 5).
 
-Bayesian hyperparameter search (Optuna TPE) for the GMRES_RL DQN agent's
-PBRS reward (env.py). Sweeps the three reward-shaping coefficients over a
-SINGLE study aggregated across the full sweep_matrices/ benchmark, optimizing
-mean total Arnoldi steps to convergence.
+Search space (Table 5):
+    lambda_work        log-uniform [1e-4, 1.0]
+    gamma_shape        uniform     [0.80, 0.999]    (also used as DQN γ)
+    convergence_bonus  uniform     [0.0, 100.0]
 
-Search space:
-    lambda_work        log-uniform [1e-4, 1.0]      per-cycle work penalty
-    gamma_shape        uniform     [0.80, 0.999]    PBRS discount + DQN gamma
-    convergence_bonus  uniform     [0.0, 100.0]     terminal bonus B
+Right-hand side: b = A·1 for every matrix (§4.2 convention).
 
-Right-hand side: b = A @ ones for every matrix.
+Built on stable-baselines3 (https://github.com/DLR-RM/stable-baselines3)
+and Optuna (https://github.com/optuna/optuna).
 
-Objective: mean total_arnoldi over the full matrix set (one trial = train+solve
-on every matrix; non-convergent solves penalized by max_cycles*m_max).
-
-Run (default sweeps every .tar.gz / .mtx / .mat in matrices/sweep_matrices/):
+Examples (default scans every .tar.gz / .mtx / .mat in matrices/hpo_matrices/):
     python analysis/bayesian_hyperparameter_search.py --n-trials 60
     python analysis/bayesian_hyperparameter_search.py --n-trials 100 --enable-pruner
-
-Requires: optuna (`pip install optuna`).
 """
 
 import argparse
@@ -39,7 +37,6 @@ import torch
 from scipy.io import loadmat, mmread
 from scipy.sparse import csr_matrix, issparse
 from stable_baselines3 import DQN
-from stable_baselines3.common.callbacks import BaseCallback
 from tqdm.auto import tqdm
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -48,14 +45,12 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from env import GMRESEnv  # noqa: E402
+from utils import RelativeResidualCallback as _StopOnDone  # noqa: E402
 
-DEFAULT_MATRICES_DIR = REPO_ROOT / "matrices" / "sweep_matrices"
+DEFAULT_MATRICES_DIR = REPO_ROOT / "matrices" / "hpo_matrices"
 
 
-# --------------------------------------------------------------------------- #
-# Matrix loading (handles .tar.gz, .mtx[.gz], .mat). b = A @ ones always.
-# --------------------------------------------------------------------------- #
-
+# matrix loading: handles .tar.gz, .mtx[.gz], .mat; b = A·1
 def _consistent_rhs(A) -> np.ndarray:
     x_true = np.ones(A.shape[1], dtype=np.float64)
     return np.asarray(A @ x_true, dtype=np.float64).reshape(-1)
@@ -127,11 +122,7 @@ def discover_matrices(matrices_dir: Path) -> list[Path]:
     return paths
 
 
-# --------------------------------------------------------------------------- #
-# Single-solve evaluation
-# --------------------------------------------------------------------------- #
-
-
+# single-solve evaluation
 class _ProgressSlots:
     """Simple slot allocator so concurrently running trials use stable tqdm rows."""
 
@@ -150,27 +141,6 @@ class _ProgressSlots:
             self._available.append(position)
             self._available.sort()
             self._cond.notify()
-
-class _StopOnDone(BaseCallback):
-    def __init__(self):
-        super().__init__()
-        self.relative_residuals = []
-        self.ms = []
-        self._done = False
-
-    def _on_step(self):
-        for info, done in zip(
-            self.locals.get("infos", []),
-            self.locals.get("dones", [False]),
-        ):
-            if "relative_residual_norm" in info:
-                self.relative_residuals.append(float(info["relative_residual_norm"]))
-            if "current_m" in info:
-                self.ms.append(int(info["current_m"]))
-            if done:
-                self._done = True
-        return not self._done
-
 
 def evaluate_solve(A, b, hp: dict, args, seed: int) -> dict:
     """Run one DQN training/solve under the given hyperparameters."""
@@ -240,12 +210,8 @@ def run_score(run: dict, args) -> float:
     return float(args.max_cycles * args.m_max + run["total_arnoldi"])
 
 
-# --------------------------------------------------------------------------- #
-# Optuna objective: aggregate over the whole matrix set
-# --------------------------------------------------------------------------- #
-
+# Optuna objective: aggregate run-score over the whole matrix set per trial
 def make_objective(matrices, args, progress_slots: _ProgressSlots | None = None):
-    """One trial = train+solve on every matrix; objective = mean run score."""
     def objective(trial: optuna.Trial) -> float:
         hp = {
             "lambda_work":       trial.suggest_float("lambda_work", 1e-4, 1.0, log=True),
@@ -311,10 +277,7 @@ def make_objective(matrices, args, progress_slots: _ProgressSlots | None = None)
     return objective
 
 
-# --------------------------------------------------------------------------- #
 # JSON export
-# --------------------------------------------------------------------------- #
-
 def _trial_to_dict(t: optuna.trial.FrozenTrial) -> dict:
     return {
         "number": t.number,
@@ -385,10 +348,6 @@ def export_results(study: optuna.Study, matrix_names: list[str], args, out_path:
     out_path.write_text(json.dumps(payload, indent=2, default=str))
 
 
-# --------------------------------------------------------------------------- #
-# CLI
-# --------------------------------------------------------------------------- #
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--matrices-dir", type=str, default=str(DEFAULT_MATRICES_DIR))
@@ -423,11 +382,11 @@ def main():
     parser.add_argument("--study-name", type=str, default="gmres_dqn_pbrs_sweep")
     parser.add_argument("--storage", type=str, default=None,
                         help="Optional Optuna storage URL for resumable studies "
-                             "(e.g. sqlite:///analysis/results/pbrs_sweep.db).")
+                             "(e.g. sqlite:///results/hpo_dqn_pbrs/pbrs_sweep.db).")
     parser.add_argument("--enable-pruner", action="store_true",
                         help="Enable MedianPruner across the matrix loop within a trial.")
     parser.add_argument("--out", type=str,
-                        default="analysis/results/pbrs_sweep.json")
+                        default="results/hpo_dqn_pbrs/pbrs_sweep.json")
     parser.add_argument("--export-every", type=int, default=5,
                         help="Snapshot the JSON every N completed trials.")
     args = parser.parse_args()

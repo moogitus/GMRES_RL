@@ -1,6 +1,36 @@
-.venv/*
-src/__pycache__/*
-analysis/__pycache__/*
-.mplconfig/*
-logs/.mpl/*
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.python-version
+build/
+dist/
+
+# Editor / OS
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.cursor/
+*.swp
+*.swo
+
+# matplotlib
+.mplconfig/
+**/.mpl/
+
+# binary distribution archives
+*.zip
+*.tgz
+
+# secrets / local-only env
+.env
+.envrc
+
+# Optuna SQLite journal files (the .db itself is committed under results/)
+*.db-journal

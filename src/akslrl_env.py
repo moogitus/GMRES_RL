@@ -1,22 +1,25 @@
+"""
+Continuous-action GMRES(m) environment matching the AK-SLRL baseline of
+Keramati & Hamdullahpur (2025), arXiv:2502.00227. Used for the SAC
+baseline in §4.1 and the SAC reward ablation in §7.4.
+
+Action a_t ∈ [0, 1] is discretized to m = ⌊a_t (m_max - 1)⌋ + 1 (§3.1).
+The observation is the full residual vector (rescaled to [0,1]), with
+log ||r|| optionally appended; this is the O(n) controller-side memory
+that motivates the discrete-action DQN env in env.py (§4.1).
+
+Built on top of gymnasium (https://github.com/Farama-Foundation/Gymnasium).
+"""
+
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 
 
+# continuous-action GMRES(m) gym env (AK-SLRL baseline, §3.2). default
+# reward is the inverse-residual reward of Keramati & Hamdullahpur (2025):
+#   R_t = cte / ||r_k|| + (||r_{k-1}|| - ||r_k||).
 class AKSLRLEnv(gym.Env):
-    """
-    Custom Environment for AK-SLRL (Adaptive Krylov Subspace using SLRL).
-
-    The agent observes the current residual vector and outputs a continuous
-    action in [0, 1] which is mapped to a restart parameter m in {1, ..., m_max}.
-    GMRES(m) is run for one restart cycle, and the agent is rewarded based on
-    the residual reduction achieved.
-
-    Reward function
-    ---------------
-    ``"original"`` (from Keramati & Hamdullahpura, 2025):
-        R_t = (cte / ||r_k||) + (||r_{k-1}|| - ||r_k||)
-    """
 
     metadata = {"render_modes": ["console"]}
 
@@ -31,28 +34,13 @@ class AKSLRLEnv(gym.Env):
         convergence_bonus=0.0,
         include_log_residual_in_state=True,
     ):
-        """
-        Parameters
-        ----------
-        A : np.ndarray
-            Coefficient matrix of the linear system Ax = b.
-        b : np.ndarray
-            Right-hand side vector.
-        m_max : int
-            Maximum Krylov subspace dimension (upper bound on restart parameter).
-        tolerance : float
-            Convergence threshold on ||r||.
-        max_cycles : int
-            Hard cap on restart cycles per episode (truncation).
-        cte : float
-            Constant c in the original reward.
-        convergence_bonus : float
-            Sparse terminal bonus added on the cycle that first drives ||r|| below
-            tolerance. Set to 0.0 to disable.
-        include_log_residual_in_state : bool
-            If True, append log(||r||) to the normalized residual vector in the
-            observation.
-        """
+        # A, b: linear system Ax = b
+        # m_max: max restart length (Krylov subspace dimension)
+        # tolerance: convergence threshold on ||r||  (NB: absolute, not relative)
+        # max_cycles: truncation cap on restart cycles per episode
+        # cte: constant c_te in the original reward (paper convention: 1.0)
+        # convergence_bonus: sparse terminal bonus on first crossing tolerance
+        # include_log_residual_in_state: append log(||r||) to the obs vector
         super().__init__()
 
         self.A = A
@@ -76,14 +64,11 @@ class AKSLRLEnv(gym.Env):
             high[-1] = 50.0
         self.observation_space = spaces.Box(low=low, high=high, dtype=np.float32)
 
+        # runtime state, populated on reset()
         self.x = None
         self.current_residual_vector = None
         self.current_residual_norm = None
         self.cycle_count = 0
-
-    # ------------------------------------------------------------------ #
-    # Gym API
-    # ------------------------------------------------------------------ #
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -98,12 +83,14 @@ class AKSLRLEnv(gym.Env):
         return obs, info
 
     def step(self, action):
+        # discretize a_t in [0,1] to m in {1,...,m_max} per §3.1
         a_t = float(np.clip(action[0], 0.0, 1.0))
         m = int(np.floor(a_t * (self.m_max - 1)) + 1)
         m = max(1, min(m, self.m_max))
 
         prev_norm = self.current_residual_norm
 
+        # already at tolerance: terminate cleanly with zero reward
         if prev_norm < self.tolerance:
             obs = self._build_observation(self.current_residual_vector, prev_norm)
             return obs, 0.0, True, False, {
@@ -133,20 +120,13 @@ class AKSLRLEnv(gym.Env):
         }
         return obs, float(reward), terminated, truncated, info
 
-    # ------------------------------------------------------------------ #
-    # Reward
-    # ------------------------------------------------------------------ #
-
+    # AK-SLRL inverse-residual reward (Keramati & Hamdullahpur 2025)
     def _compute_reward(self, prev_norm, curr_norm):
         eps = 1e-12
         reward = (self.cte / (curr_norm + eps)) + (prev_norm - curr_norm)
         if curr_norm < self.tolerance <= prev_norm:
             reward += self.convergence_bonus
         return reward
-
-    # ------------------------------------------------------------------ #
-    # Observation
-    # ------------------------------------------------------------------ #
 
     def _build_observation(self, residual_vector, residual_norm):
         normalized = self._normalize_state(residual_vector)
@@ -156,6 +136,7 @@ class AKSLRLEnv(gym.Env):
             normalized = np.concatenate([normalized, np.array([log_r], dtype=np.float32)])
         return normalized
 
+    # min-max rescale the residual vector into [0,1]^n
     @staticmethod
     def _normalize_state(vector):
         v_min = float(np.min(vector))
@@ -163,10 +144,6 @@ class AKSLRLEnv(gym.Env):
         if v_max - v_min == 0:
             return np.zeros_like(vector, dtype=np.float32)
         return ((vector - v_min) / (v_max - v_min)).astype(np.float32)
-
-    # ------------------------------------------------------------------ #
-    # GMRES(m) core
-    # ------------------------------------------------------------------ #
 
     def _execute_gmres_cycle(self, x_current, r_current, m):
         V, H, beta, actual_m, breakdown = self._arnoldi_iteration(
@@ -223,10 +200,7 @@ class AKSLRLEnv(gym.Env):
         return V, H, beta, actual_m, breakdown
 
 
-# ---------------------------------------------------------------------- #
-# Quick smoke test
-# ---------------------------------------------------------------------- #
-
+# quick smoke test
 if __name__ == "__main__":
     rng = np.random.default_rng(0)
     n = 100

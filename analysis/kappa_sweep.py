@@ -1,28 +1,21 @@
 """
-analysis/kappa_sweep.py
+κ-sweep on 1D convection-diffusion matrices (§4.3, Figure 1). Compares:
+  - fixed-restart GMRES(20) (deterministic),
+  - randGMRES with uniform m ∈ {5, 10, 15, 20} per cycle,
+  - the DQN-controlled GMRES(m) restart controller.
 
-Iterates over the 20 convection-diffusion matrices in
-matrices/kappa_sweep_20_matrices/ and benchmarks three restart-selection
-strategies against each other:
-  - GMRES(20) with fixed restart (deterministic),
-  - randGMRES with uniform random m in {5, 10, 15, 20} per cycle,
-  - DQN-controlled GMRES(m) (the agent of this paper).
+For each of the 20 matrices in matrices/kappa_sweep_20_matrices/, generates
+5 standard-normal unit-norm RHS vectors and runs each stochastic method
+with 2 seeds per RHS. Records total Arnoldi iterations and wall-clock
+time per run. GMRES(20) is run once per RHS (deterministic).
 
-For each matrix:
-  - generates 5 random RHS vectors (deterministic given --rhs-seed)
-  - runs each stochastic algorithm with 2 independent seeds per RHS
-  - tracks total Arnoldi iterations and wall-clock time per run
+Writes results/kappa_sweep/kappa_sweep.json (raw runs + κ_2(A) per matrix)
+and results/kappa_sweep/kappa_sweep_arnoldi_vs_kappa.png (Arnoldi vs κ
+on log-log axes with std bands).
 
-All run-level data is written to analysis/results/kappa_sweep.json.
-A paper-ready plot of mean total Arnoldi iterations vs. condition number
-(with std bands, log-log axes, three lines for GMRES(20), randGMRES, and
-DQN) is saved to analysis/results/kappa_sweep_arnoldi_vs_kappa.{pdf,png}.
+Built on stable-baselines3 (https://github.com/DLR-RM/stable-baselines3).
 
-GMRES(20) is deterministic and is run only once per RHS. DQN and randGMRES
-each get `num_seeds` independent runs per RHS.
-Total runs: 20 matrices x 5 RHS x (2*num_seeds + 1) = 500 by default.
-
-Run:
+Examples:
     python analysis/kappa_sweep.py
     python analysis/kappa_sweep.py --limit 3       # quick smoke test
 """
@@ -41,7 +34,6 @@ import torch
 from scipy.io import mmread
 from scipy.sparse import csr_matrix, issparse
 from stable_baselines3 import DQN
-from stable_baselines3.common.callbacks import BaseCallback
 from tqdm.auto import tqdm
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -50,16 +42,16 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from env import GMRESEnv  # noqa: E402
+from utils import RelativeResidualCallback as _StopOnDone  # noqa: E402
 
 DEFAULT_MATRICES_DIR = REPO_ROOT / "matrices" / "kappa_sweep_20_matrices"
-DEFAULT_OUT_JSON = REPO_ROOT / "analysis" / "results" / "kappa_sweep.json"
-DEFAULT_OUT_PLOT = REPO_ROOT / "analysis" / "results" / "kappa_sweep_arnoldi_vs_kappa.pdf"
+DEFAULT_OUT_JSON = REPO_ROOT / "results" / "kappa_sweep" / "kappa_sweep.json"
+DEFAULT_OUT_PLOT = REPO_ROOT / "results" / "kappa_sweep" / "kappa_sweep_arnoldi_vs_kappa.png"
 
-# Restart values for randGMRES (uniform sampled per cycle), matching the
-# Peairs-style 155-matrix benchmark configuration.
+# randGMRES restart values (§4.2), uniform per cycle
 RAND_RESTARTS = (5, 10, 15, 20)
 
-# Optimal DQN hyperparameters from the Bayesian sweep (matches train_dqn.py).
+# DQN hyperparameters from the Bayesian sweep (Table 5)
 DQN_HP = dict(
     m_max=20,
     history_length=5,
@@ -78,10 +70,6 @@ DQN_HP = dict(
 )
 
 
-# --------------------------------------------------------------------------- #
-# Loading + condition number
-# --------------------------------------------------------------------------- #
-
 def load_matrix(path: Path):
     A = mmread(str(path))
     if not issparse(A):
@@ -89,8 +77,8 @@ def load_matrix(path: Path):
     return csr_matrix(A.astype(np.float64))
 
 
+# 2-norm condition number κ_2(A) via dense SVD (n ≤ 3500 in this sweep)
 def compute_condition_number(A) -> float:
-    """2-norm condition number κ₂(A) via dense SVD. n ≤ 3500 in this sweep."""
     A_dense = A.toarray() if issparse(A) else np.asarray(A, dtype=np.float64)
     s = np.linalg.svd(A_dense, compute_uv=False)
     smin = float(s[-1])
@@ -99,8 +87,8 @@ def compute_condition_number(A) -> float:
     return float(s[0] / smin)
 
 
+# standard-normal RHS, rescaled to unit Euclidean norm (§4.3)
 def random_rhs(n: int, rng: np.random.Generator) -> np.ndarray:
-    """Standard normal RHS, normalized to unit Euclidean norm."""
     b = rng.standard_normal(n)
     return b / max(float(np.linalg.norm(b)), 1e-12)
 
@@ -111,30 +99,6 @@ def discover_matrices(matrices_dir: Path):
         raise FileNotFoundError(f"no .mtx files found in {matrices_dir}")
     return paths
 
-
-# --------------------------------------------------------------------------- #
-# Solvers
-# --------------------------------------------------------------------------- #
-
-class _StopOnDone(BaseCallback):
-    def __init__(self):
-        super().__init__()
-        self.relative_residuals = []
-        self.ms = []
-        self._done = False
-
-    def _on_step(self):
-        for info, done in zip(
-            self.locals.get("infos", []),
-            self.locals.get("dones", [False]),
-        ):
-            if "relative_residual_norm" in info:
-                self.relative_residuals.append(float(info["relative_residual_norm"]))
-            if "current_m" in info:
-                self.ms.append(int(info["current_m"]))
-            if done:
-                self._done = True
-        return not self._done
 
 
 def run_dqn(A, b, seed: int) -> dict:
@@ -267,10 +231,7 @@ def run_random_gmres(A, b, restarts=RAND_RESTARTS, seed: int = 0) -> dict:
     }
 
 
-# --------------------------------------------------------------------------- #
-# Driver
-# --------------------------------------------------------------------------- #
-
+# sweep driver
 def _save_json(results, args, out_json: Path):
     payload = {
         "meta": {
@@ -419,10 +380,7 @@ def main():
         print(f"Wrote plot to {out_plot}")
 
 
-# --------------------------------------------------------------------------- #
-# Plotting
-# --------------------------------------------------------------------------- #
-
+# plotting (Figure 1)
 def _aggregate(matrix_entry, alg_key, value_key="total_arnoldi"):
     """Flatten the per-(rhs, seed) values for one algorithm into a 1D array."""
     return np.asarray(
@@ -518,9 +476,7 @@ def make_plot(results, out_path: Path):
     )
 
     fig.tight_layout()
-    fig.savefig(out_path, bbox_inches="tight")
-    if out_path.suffix.lower() == ".pdf":
-        fig.savefig(out_path.with_suffix(".png"), bbox_inches="tight", dpi=200)
+    fig.savefig(out_path, bbox_inches="tight", dpi=200)
     plt.close(fig)
 
 

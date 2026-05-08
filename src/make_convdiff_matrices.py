@@ -1,9 +1,10 @@
 """
-Generates all convdiff matrices used in the project and saves them to
-matrices/kappa_sweep_20_matrices/ as Matrix Market (.mtx) files.
+Generates the 20 1D convection-diffusion matrices used in §4.3
+(κ-sweep). Each matrix discretizes -ε u'' + β u' = f on [0,1] with
+Dirichlet boundaries via central FD; sweeping (ε, n) varies κ_2(A) over
+orders of magnitude with the generating PDE held fixed.
 
-The matrices in that folder were originally generated in a separate
-codebase; this script is kept on file as a record of the construction.
+Outputs Matrix Market (.mtx) files under matrices/kappa_sweep_20_matrices/.
 """
 
 import numpy as np
@@ -12,6 +13,8 @@ from scipy.io import mmwrite
 from pathlib import Path
 
 
+# tridiagonal upwind-stabilised central FD for -eps u'' + beta u' = f on
+# [0,1] with Dirichlet boundaries; n interior nodes, h = 1/(n+1)
 def make_convdiff_1d_sparse(n: int, eps: float, beta: float = 1.0):
     h = 1.0 / (n + 1)
     diag_v = np.full(n,     2 * eps / h**2)
@@ -43,11 +46,12 @@ MATRICES = [
     {"n": 2800, "eps": 0.20, "name": "convdiff_n2800_eps20"},
 ]
 
-out_dir = Path(__file__).parent / "matrices" / "kappa_sweep_20_matrices"
-out_dir.mkdir(parents=True, exist_ok=True)
+if __name__ == "__main__":
+    out_dir = Path(__file__).resolve().parent.parent / "matrices" / "kappa_sweep_20_matrices"
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-for cfg in MATRICES:
-    A = make_convdiff_1d_sparse(cfg["n"], cfg["eps"])
-    path = out_dir / f"{cfg['name']}.mtx"
-    mmwrite(str(path), A)
-    print(f"Saved {path.name}  shape={A.shape}  nnz={A.nnz}")
+    for cfg in MATRICES:
+        A = make_convdiff_1d_sparse(cfg["n"], cfg["eps"])
+        path = out_dir / f"{cfg['name']}.mtx"
+        mmwrite(str(path), A)
+        print(f"Saved {path.name}  shape={A.shape}  nnz={A.nnz}")

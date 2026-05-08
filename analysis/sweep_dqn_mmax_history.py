@@ -1,11 +1,10 @@
 """
-Screen DQN action-range and history-length choices on a subset of the test suite.
+Sensitivity sweep over the DQN action range m_max and observation depth d
+(history length). Internal sanity check; not a paper figure or table.
+Compares the DQN restart controller across m_max in {20, 40, 60} and
+history_length in {1, 5, 10} on a small subset of the benchmark suite.
 
-This script compares only the repo's DQN across:
-  - m_max in {20, 40, 60}
-  - history_length in {1, 5, 10}
-
-Results are saved as JSON with both matrix-level runs and aggregate summaries.
+Reuses train_dqn.run_dqn (built on stable-baselines3).
 """
 import argparse
 import json
@@ -25,8 +24,8 @@ if str(SRC) not in sys.path:
 
 from train_dqn import discover_matrix_names, load_problem, run_dqn
 
+# summary statistics over seeds for a single matrix/config
 def summarise_runs(runs: list[dict]) -> dict:
-# summary statistics for a list of runs (across seeds) on same matrix/config
     return {
         "convergence_rate": float(np.mean([run["converged"] for run in runs])),
         "arnoldi_mean": float(np.mean([run["total_arnoldi"] for run in runs])),
@@ -55,7 +54,7 @@ def rank_combo(summary: dict) -> tuple:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--matrices-dir", type=str, default="matrices/test")
+    parser.add_argument("--matrices-dir", type=str, default="matrices/full_benchmark")
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--max-cycles", type=int, default=1000)
     parser.add_argument("--tolerance", type=float, default=1e-6)
@@ -74,7 +73,7 @@ def main():
     parser.add_argument("--exploration-final-eps", type=float, default=0.01)
     parser.add_argument("--m-max-values", nargs="+", type=int, default=[20, 40, 60])
     parser.add_argument("--history-length-values", nargs="+", type=int, default=[1, 5, 10])
-    parser.add_argument("--out", type=str, default="logs/dqn_mmax_history_sweep_first10.json")
+    parser.add_argument("--out", type=str, default="results/dqn_mmax_history/results.json")
     args = parser.parse_args()
 
     matrices_root = Path(args.matrices_dir)

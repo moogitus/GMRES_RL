@@ -1,62 +1,36 @@
 """
-compute_epic_sweep_matrices.py
-==============================
+EPIC analysis on the heterogeneous SuiteSparse HPO sweep matrices
+(§3.3, §7.3, Table 1, HPO column). Companion to compute_epic_rewards.py
+(synthetic convdiff coverage); reuses its reward definitions, EPIC
+canonicalization, Pearson distance, and bootstrap.
 
-EPIC (Equivalent-Policy Invariant Comparison) analysis on the heterogeneous
-sweep matrices used in the main DQN hyperparameter experiments.
+Differences from the convdiff variant:
+  - transition distribution is the 16 SuiteSparse matrices in
+    matrices/hpo_matrices/ instead of synthetic 1D convection-diffusion;
+  - uses GMRESEnv (discrete action; relative residual norms ρ = ||r||/||b||)
+    so transitions are scale-invariant across the heterogeneous suite;
+  - default --convergence-bonus is 9 (the value used in DQN training);
+  - writes epic_sweep_*.csv to avoid overwriting the convdiff outputs.
 
-Answers: "Do the EPIC reward-similarity conclusions hold on the heterogeneous
-matrix distribution used in sweep experiments, not just convdiff matrices?"
+Transition representation: each row is (ρ_{t-1}, m, ρ_t, converged).
+Initial residual is ρ_0 = 1 by construction, convergence threshold is
+relative (default 1e-6).
 
-Key differences from compute_epic_rewards.py (the convdiff baseline):
-  - Transition distribution: the 16 SuiteSparse matrices in matrices/sweep_matrices/
-    instead of synthetic 1-D convection-diffusion matrices.
-  - Environment: GMRESEnv (discrete action, *relative* residual norms) so that
-    transitions are scale-invariant across the heterogeneous matrix set.
-  - Reward functions: identical definitions reused from compute_epic_rewards.py.
-  - EPIC machinery: identical canonicalization, Pearson distance, and bootstrap
-    reused from compute_epic_rewards.py.
-  - Default convergence_bonus=9  (the value used in DQN training, not 0 or 10).
-  - Outputs written to epic_sweep_*.csv — does NOT overwrite convdiff results.
+Coverage modes (same semantics as compute_epic_rewards.py):
+  'random'  m ~ Uniform{1, ..., m_max} each cycle
+  'fixed20' m = m_max every cycle
+  'mixed'   num_rollouts of 'random' followed by num_rollouts of 'fixed20'
+            per matrix; broad action coverage, fixed-m anchor present.
 
-Transition representation (relative norms)
-------------------------------------------
-State  = relative residual norm  rho = ||r|| / ||b||.
-A transition is:
+Sanity check: D_EPIC(R_PBRS, R_work) should be ≈ 0 when convergence_bonus
+is 0, since EPIC is invariant to PBRS and R_PBRS - R_work = γ Φ(s') - Φ(s).
 
-    (rho_{t-1},  m,  rho_t,  converged)
-
-where m is the discrete restart dimension chosen this cycle.
-Using relative norms makes the transition dataset scale-invariant: each
-matrix's initial residual is rho_0 = 1.0 regardless of ||b||, and the
-convergence threshold is the same relative value (default 1e-6).
-
-Coverage modes (same semantics as compute_epic_rewards.py)
-----------------------------------------------------------
-  'random'  : action m drawn uniformly from {1, ..., m_max} each cycle
-  'fixed20' : action m = m_max every cycle (standard GMRES(m_max) baseline)
-  'mixed'   : num_rollouts random-coverage rollouts THEN num_rollouts fixed20
-              rollouts per matrix, so action coverage is broad but the fixed-m
-              baseline is also represented.
-
-Usage
------
-    # from repo root (New_Final_Project/)
+Examples (from repo root):
     python epic/compute_epic_sweep_matrices.py
-
-    # with explicit matrix directory
     python epic/compute_epic_sweep_matrices.py \\
-        --matrices-dir matrices/sweep_matrices \\
-        --convergence-bonus 9 \\
-        --coverage mixed \\
-        --bootstrap 200 \\
+        --matrices-dir matrices/hpo_matrices \\
+        --convergence-bonus 9 --coverage mixed --bootstrap 200 \\
         --out-matrix epic/epic_sweep_distance_matrix.csv
-
-SANITY CHECK
-------------
-    D_EPIC(R_PBRS, R_work) should be ≈ 0.000 when convergence_bonus=0,
-    because EPIC is invariant to potential-based shaping and R_PBRS = R_work
-    + gamma * Phi(s') - Phi(s).
 """
 
 from __future__ import annotations
@@ -76,21 +50,17 @@ import numpy as np
 from scipy.io import loadmat, mmread
 from scipy.sparse import csr_matrix, issparse
 
-# ---------------------------------------------------------------------------
-# Path setup — make both epic/ and GMRES_RL/src/ importable.
-# ---------------------------------------------------------------------------
+# path setup: make both epic/ and src/ importable regardless of cwd
 _SCRIPT_DIR = Path(__file__).parent.resolve()
 _PROJECT_ROOT = _SCRIPT_DIR.parent
-_GMRES_SRC = _PROJECT_ROOT / "GMRES_RL" / "src"
+_GMRES_SRC = _PROJECT_ROOT / "src"
 
 for _p in [str(_SCRIPT_DIR), str(_GMRES_SRC)]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-# ---------------------------------------------------------------------------
-# Import shared EPIC machinery from compute_epic_rewards.py.
-# (collect_transitions is NOT imported; we provide our own below.)
-# ---------------------------------------------------------------------------
+# shared EPIC machinery (reward defs, canonicalization, bootstrap, IO).
+# collect_transitions is provided locally; everything else is reused.
 from compute_epic_rewards import (  # noqa: E402
     RewardCfg,
     REWARD_REGISTRY,
@@ -107,14 +77,10 @@ from compute_epic_rewards import (  # noqa: E402
     Transition,
 )
 
-# ---------------------------------------------------------------------------
-# Import GMRESEnv (discrete-action environment, relative residual norms).
-# ---------------------------------------------------------------------------
 from env import GMRESEnv  # noqa: E402
 
-# ---------------------------------------------------------------------------
-# Default sweep matrix set (mirrors matrices/sweep_matrices/ directory)
-# ---------------------------------------------------------------------------
+
+# default sweep matrix set; mirrors matrices/hpo_matrices/
 SWEEP_MATRIX_NAMES: List[str] = [
     "1138_bus",
     "G2_circuit",
@@ -135,10 +101,7 @@ SWEEP_MATRIX_NAMES: List[str] = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Matrix loading utilities (verbatim from GMRES_RL/src/train_sac.py)
-# ---------------------------------------------------------------------------
-
+# matrix loading: SuiteSparse .tar.gz, .mtx[.gz], or .mat
 def _largest_matrix_member(tar: tarfile.TarFile) -> tarfile.TarInfo:
     members = [
         m for m in tar.getmembers()
@@ -282,15 +245,12 @@ def load_problem(
     )
 
 
-# ---------------------------------------------------------------------------
-# Transition collection from sweep matrices
-# ---------------------------------------------------------------------------
-
+# transition collection over the sweep matrices
 def _sample_discrete_action(coverage: str, m_max: int, rng: np.random.Generator) -> int:
     """
     Return a discrete action index in {0, ..., m_max-1}.
-    action index i  ->  restart parameter m = i + 1.
-    'fixed20' always returns m_max - 1  (i.e. m = m_max).
+    action index i  ->  restart length m = i + 1.
+    'fixed20' always returns m_max - 1 (i.e. m = m_max).
     'random'  samples uniformly.
     """
     if coverage == "fixed20":
@@ -313,8 +273,8 @@ def collect_transitions_from_sweep(
     """
     Load each sweep matrix and run GMRESEnv rollouts to collect transitions.
 
-    Transitions store *relative* residual norms rho = ||r|| / ||b||, so they
-    are scale-invariant across the heterogeneous matrix set.  The tolerance
+    Transitions store *relative* residual norms ρ = ||r|| / ||b||, so they
+    are scale-invariant across the heterogeneous matrix set. The tolerance
     argument is therefore also a relative threshold.
 
     For 'mixed' coverage: runs num_rollouts random-action rollouts AND
@@ -326,8 +286,8 @@ def collect_transitions_from_sweep(
     ----------
     matrix_names  : names of matrices to load (matched against matrices_dir)
     matrices_dir  : directory containing .tar.gz or .mat files
-    m_max         : maximum restart parameter; action i -> m = i+1
-    tolerance     : relative convergence threshold  (terminated when rho < tol)
+    m_max         : maximum restart length; action i -> m = i+1
+    tolerance     : relative convergence threshold (terminated when ρ < tol)
     max_cycles    : max GMRES cycles per rollout (hard cap)
     num_rollouts  : rollouts per matrix per coverage pass
     coverage      : 'random' | 'fixed20' | 'mixed'
@@ -400,10 +360,7 @@ def collect_transitions_from_sweep(
     return transitions
 
 
-# ---------------------------------------------------------------------------
-# Output helpers (supplement those imported from compute_epic_rewards)
-# ---------------------------------------------------------------------------
-
+# output helpers (supplement those imported from compute_epic_rewards)
 def print_sweep_transition_stats(transitions: List[Transition], args: argparse.Namespace) -> None:
     prev_norms = np.array([t.prev_norm for t in transitions])
     curr_norms = np.array([t.curr_norm for t in transitions])
@@ -424,20 +381,16 @@ def print_sweep_transition_stats(transitions: List[Transition], args: argparse.N
     print(f"  lambda_work            : {args.lambda_work}")
     print(f"  tolerance tau          : {args.tolerance}")
     print(f"  converged frac         : {np.mean([t.converged for t in transitions]):.3f}")
-    print(f"  norm type              : relative (rho = ||r|| / ||b||)")
+    print(f"  norm type              : relative (ρ = ||r|| / ||b||)")
 
-
-# ---------------------------------------------------------------------------
-# Argument parser
-# ---------------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
-    default_matrices_dir = str(_PROJECT_ROOT / "GMRES_RL" / "matrices" / "sweep_matrices")
+    default_matrices_dir = str(_PROJECT_ROOT / "matrices" / "hpo_matrices")
 
     p = argparse.ArgumentParser(
         description=(
             "Compute EPIC distances between GMRES reward functions on the "
-            "heterogeneous sweep matrices (matrices/sweep_matrices/)."
+            "heterogeneous sweep matrices (matrices/hpo_matrices/)."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -501,19 +454,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--out-matrix", type=str,
-        default=str(_SCRIPT_DIR / "epic_sweep_distance_matrix.csv"),
+        default=str(_SCRIPT_DIR / "results" / "epic_sweep_distance_matrix.csv"),
     )
     p.add_argument(
         "--out-bootstrap", type=str,
-        default=str(_SCRIPT_DIR / "epic_sweep_bootstrap_summary.csv"),
+        default=str(_SCRIPT_DIR / "results" / "epic_sweep_bootstrap_summary.csv"),
     )
 
     return p
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     args = build_parser().parse_args()

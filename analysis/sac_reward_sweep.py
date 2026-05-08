@@ -1,39 +1,28 @@
 """
-eval_reward_sweep.py
+SAC reward-function ablation (§7.4, Table 6). Holds the controller fixed
+at SAC and runs an independent Optuna TPE sweep over each reward's
+coefficients on the convdiff Easy → Extreme ladder, then reports total
+Arnoldi iterations at each tuned optimum (3 RHS × 3 seeds per cell).
 
-Two-phase hyperparameter sweep comparing reward functions for AK-SLRL.
+Reward types compared:
+  - "original"  inverse-residual reward of Keramati & Hamdullahpur (2025)
+                 R = c_te / ||r_k|| + (||r_{k-1}|| - ||r_k||)
+  - "shaped"    naive log-shaped (Φ = -log ||r||, unbounded)
+  - "pbrs"      τ-clamped PBRS (Φ_τ = -log(max(||r||, τ) / τ) ≤ 0)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Hyperparameter search spaces (Bayesian TPE, Optuna):
+Sweep search spaces:
+  original  cte ∈ [0.05, 200] log-uniform; conv_bonus ∈ [0, 30] uniform
+  shaped    lambda_work ∈ [1e-4, 0.15] log-uniform;
+            gamma_shape ∈ [0.70, 0.999] uniform; conv_bonus ∈ [0, 30] uniform
+  pbrs      same shape as "shaped" but with the τ-clamped potential
 
-  "original"  (authors' reward: R = c/‖r‖ + ‖r_prev‖ - ‖r‖)
-      cte               ∈ [0.05, 200]    log-uniform
-      convergence_bonus ∈ [0,    30]     uniform
+Built on stable-baselines3 (https://github.com/DLR-RM/stable-baselines3)
+and Optuna (https://github.com/optuna/optuna).
 
-  "shaped"    (PBRS with Φ = -log‖r‖, unbounded)
-      lambda_work       ∈ [1e-4, 0.15]  log-uniform
-      gamma_shape       ∈ [0.70, 0.999] uniform
-      convergence_bonus ∈ [0,    30]    uniform
-
-  "pbrs"      (τ-clamped PBRS, Φ_τ = -log(max(‖r‖,τ)/τ) ≤ 0)
-      lambda_work       ∈ [1e-4, 0.15]  log-uniform
-      gamma_shape       ∈ [0.70, 0.999] uniform
-      convergence_bonus ∈ [0,    30]    uniform
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Phase 1 — Bayesian sweep:
-  Objective: mean speedup vs GMRES(20) on 3 proxy configs × 1 seed each.
-  Algorithm: Optuna TPESampler (default 40 trials, ~5 min total per reward type).
-
-Phase 2 — Full 5-point κ eval:
-  3 RHS vectors × 3 seeds = 9 SLRL runs per (reward_type, κ_level).
-  Gives enough samples for std-dev comparison and basic significance testing.
-  Results saved to logs/reward_sweep_results.json.
-
-Run:
-    python eval/eval_reward_sweep.py                  # full run
-    python eval/eval_reward_sweep.py --n-trials 20   # faster sweep
-    python eval/eval_reward_sweep.py --skip-sweep    # use hardcoded defaults
+Examples:
+    python analysis/sac_reward_sweep.py                  # full run
+    python analysis/sac_reward_sweep.py --n-trials 20    # faster sweep
+    python analysis/sac_reward_sweep.py --skip-sweep     # use hardcoded defaults
 """
 
 import sys, os as _os
@@ -52,21 +41,19 @@ from scipy.sparse import csr_matrix
 from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import BaseCallback
 
-from src.env import AKSLRLEnv
+from src.akslrl_env import AKSLRLEnv
 
-# ─────────────────────────────────────────── configs ──
 
-MATRIX_DIR = Path(__file__).parent.parent / "data" / "matrices" / "convdiff_matrices"
+MATRIX_DIR = Path(__file__).parent.parent / "matrices" / "kappa_sweep_20_matrices"
 
-# Small/medium proxy configs used during the Bayesian sweep (fast: ~5 s each).
-# Matrices loaded from convdiff_matrices/; max_cycles controls episode length.
+# small proxy configs used during the Optuna sweep (~5 s each)
 SWEEP_CONFIGS = [
     {"n": 500, "eps": 0.05, "max_cycles":  600},   # κ ~50k   (easy)
     {"n": 500, "eps": 0.10, "max_cycles": 1007},   # κ ~130k  (medium)
     {"n": 900, "eps": 0.20, "max_cycles": 7050},   # κ ~280k  (hard)
 ]
 
-# Standard 5 difficulty levels for the final eval (matches baseline plot).
+# 5 difficulty levels used in Table 6
 EVAL_CONFIGS = [
     {"label": "Easy",      "n": 1000, "eps": 0.05, "max_cycles":  3000,
      "mtx": "convdiff_n1000_eps05_easy.mtx"},
@@ -87,14 +74,14 @@ def load_convdiff(mtx_filename):
 
 REWARD_TYPES = ["original", "shaped", "pbrs"]
 
-# Sensible defaults used when --skip-sweep is passed.
+# fallback values used when --skip-sweep is passed
 DEFAULT_PARAMS = {
     "original": {"cte": 1.0,    "convergence_bonus": 10.0},
     "shaped":   {"lambda_work": 0.001, "gamma_shape": 0.97, "convergence_bonus": 10.0},
     "pbrs":     {"lambda_work": 0.001, "gamma_shape": 0.97, "convergence_bonus": 10.0},
 }
 
-# Search space description (printed at startup for transparency).
+# search space (echoed to stdout at startup)
 SEARCH_SPACE = {
     "original": {
         "cte":               ("log-uniform", 0.05,  200.0),
@@ -123,8 +110,7 @@ def print_search_space():
     print("━" * 64)
 
 
-# ─────────────────────────────────────────── helpers ──
-
+# helpers
 def _summarise(residuals, ms, tolerance, max_cycles, m_max):
     res = np.array(residuals)
     msa = np.array(ms)
@@ -212,14 +198,12 @@ def kappa_approx(A, n):
     return abs(lmax/lmin)
 
 
-# ─────────────────────────────────── Bayesian sweep ──
-
+# Optuna sweep
 def make_objective(reward_type, m_max, tolerance, gamma_sac, holdout_seed):
-    """Return an Optuna objective for the given reward_type."""
     # Pre-build proxy problems (fixed across all trials for fair comparison).
     # Proxy configs (n=500/900) are not in the saved eval matrices so we
     # still generate them on the fly — they are small and fast.
-    from src.matrices import make_convdiff_1d_sparse
+    from src.make_convdiff_matrices import make_convdiff_1d_sparse
     problems = []
     for cfg in SWEEP_CONFIGS:
         n, eps, mc = cfg["n"], cfg["eps"], cfg["max_cycles"]
@@ -275,8 +259,7 @@ def run_sweep(reward_type, n_trials, m_max, tolerance, gamma_sac, holdout_seed):
     return best
 
 
-# ────────────────────────────────── full 5-point eval ──
-
+# full 5-point evaluation (Table 6)
 def run_full_eval(reward_type, params, m_max, tolerance, gamma_sac,
                   num_rhs, num_seeds, holdout_seed):
     """
@@ -323,8 +306,6 @@ def run_full_eval(reward_type, params, m_max, tolerance, gamma_sac,
     return results
 
 
-# ──────────────────────────────────────────────────────── main ──
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--m-max",        type=int,   default=20)
@@ -340,7 +321,7 @@ def main():
     parser.add_argument("--skip-sweep",   action="store_true",
                         help="Skip Bayesian sweep; use default hyperparams")
     parser.add_argument("--out",          type=str,
-                        default="logs/reward_sweep_results.json")
+                        default="results/reward_sweep_sac/results.json")
     args = parser.parse_args()
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
@@ -349,7 +330,7 @@ def main():
     print(f"\nFinal eval: {args.num_rhs} RHS × {args.num_seeds} seeds"
           f" = {args.num_rhs * args.num_seeds} SLRL runs per (reward_type, κ-level)")
 
-    # ── Phase 1: Bayesian sweep ───────────────────────────────────────────
+    # optuna sweep
     best_params: dict = {}
     if args.skip_sweep:
         print("\nSkipping sweep — using default hyperparameters.")
@@ -372,7 +353,7 @@ def main():
     for rt, p in best_params.items():
         print(f"  {rt}: {p}")
 
-    # ── Phase 2: full 5-point eval ────────────────────────────────────────
+    # full 5-point evaluation
     print("\n" + "=" * 64)
     print("Phase 2: Full 5-point κ eval")
     print("=" * 64)
@@ -391,7 +372,7 @@ def main():
             holdout_seed=args.holdout_seed,
         )
 
-    # ── Save JSON ─────────────────────────────────────────────────────────
+    # save JSON
     output = {
         "best_params": best_params,
         "results":     all_results,
@@ -405,9 +386,9 @@ def main():
     Path(args.out).write_text(json.dumps(output, indent=2))
     print(f"\nResults saved to {args.out}")
 
-    # ── Summary table with stddev ─────────────────────────────────────────
+    # summary table with stddev
     print("\n" + "=" * 80)
-    print(f"{'Level':<12} {'kappa':>8}  " +
+    print(f"{'Level':<12} {'κ':>8}  " +
           "  ".join(f"{'mean±std':>16}" for _ in REWARD_TYPES))
     print(f"{'':>22}  " + "  ".join(f"[{rt}]" + " " * (16 - len(rt) - 2)
                                     for rt in REWARD_TYPES))

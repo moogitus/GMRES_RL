@@ -2,20 +2,25 @@
 analysis/kappa_sweep.py
 
 Iterates over the 20 convection-diffusion matrices in
-matrices/kappa_sweep_20_matrices/ and benchmarks DQN-controlled GMRES(m)
-against fixed-restart GMRES(20). For each matrix:
+matrices/kappa_sweep_20_matrices/ and benchmarks three restart-selection
+strategies against each other:
+  - GMRES(20) with fixed restart (deterministic),
+  - randGMRES with uniform random m in {5, 10, 15, 20} per cycle,
+  - DQN-controlled GMRES(m) (the agent of this paper).
+
+For each matrix:
   - generates 5 random RHS vectors (deterministic given --rhs-seed)
-  - for each (matrix, RHS, algorithm) runs 2 independent seeds
+  - runs each stochastic algorithm with 2 independent seeds per RHS
   - tracks total Arnoldi iterations and wall-clock time per run
 
 All run-level data is written to analysis/results/kappa_sweep.json.
 A paper-ready plot of mean total Arnoldi iterations vs. condition number
-(with std bands, log-log axes, two lines for DQN and GMRES(20)) is saved
-to analysis/results/kappa_sweep_arnoldi_vs_kappa.{pdf,png}.
+(with std bands, log-log axes, three lines for GMRES(20), randGMRES, and
+DQN) is saved to analysis/results/kappa_sweep_arnoldi_vs_kappa.{pdf,png}.
 
-GMRES(20) is deterministic, so it is run only once per RHS (the seed is
-irrelevant). DQN gets `num_seeds` independent runs per RHS.
-Total runs: 20 matrices x 5 RHS x (num_seeds + 1) = 300 by default.
+GMRES(20) is deterministic and is run only once per RHS. DQN and randGMRES
+each get `num_seeds` independent runs per RHS.
+Total runs: 20 matrices x 5 RHS x (2*num_seeds + 1) = 500 by default.
 
 Run:
     python analysis/kappa_sweep.py
@@ -49,6 +54,10 @@ from env import GMRESEnv  # noqa: E402
 DEFAULT_MATRICES_DIR = REPO_ROOT / "matrices" / "kappa_sweep_20_matrices"
 DEFAULT_OUT_JSON = REPO_ROOT / "analysis" / "results" / "kappa_sweep.json"
 DEFAULT_OUT_PLOT = REPO_ROOT / "analysis" / "results" / "kappa_sweep_arnoldi_vs_kappa.pdf"
+
+# Restart values for randGMRES (uniform sampled per cycle), matching the
+# Peairs-style 155-matrix benchmark configuration.
+RAND_RESTARTS = (5, 10, 15, 20)
 
 # Optimal DQN hyperparameters from the Bayesian sweep (matches train_dqn.py).
 DQN_HP = dict(
@@ -216,6 +225,48 @@ def run_fixed_gmres(A, b, m: int = 20, seed: int = 0) -> dict:
     }
 
 
+def run_random_gmres(A, b, restarts=RAND_RESTARTS, seed: int = 0) -> dict:
+    """Step the GMRES env with a uniformly random m in `restarts` per cycle.
+
+    Mirrors run_dqn / run_fixed_gmres; the seed controls both the env reset
+    and the per-cycle restart-value draws so reruns at the same seed are
+    reproducible.
+    """
+    rng = np.random.default_rng(seed)
+    env = GMRESEnv(
+        A=A, b=b,
+        m_max=DQN_HP["m_max"],
+        tolerance=DQN_HP["tolerance"],
+        max_cycles=DQN_HP["max_cycles"],
+        history_length=DQN_HP["history_length"],
+        lambda_work=0.0,
+        gamma_shape=DQN_HP["gamma"],
+        convergence_bonus=0.0,
+    )
+    env.reset(seed=seed)
+    total_arnoldi = 0
+    converged = False
+    final_relres = float("inf")
+    t0 = time.perf_counter()
+    for _ in range(DQN_HP["max_cycles"]):
+        m = int(rng.choice(restarts))
+        _, _, terminated, truncated, info = env.step(m - 1)
+        total_arnoldi += int(info["current_m"])
+        final_relres = float(info["relative_residual_norm"])
+        if terminated:
+            converged = True
+            break
+        if truncated:
+            break
+    elapsed = time.perf_counter() - t0
+    return {
+        "converged": bool(converged),
+        "total_arnoldi": int(total_arnoldi),
+        "elapsed_seconds": float(elapsed),
+        "final_relative_residual": float(final_relres),
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Driver
 # --------------------------------------------------------------------------- #
@@ -232,10 +283,14 @@ def _save_json(results, args, out_json: Path):
             "max_cycles": DQN_HP["max_cycles"],
             "m_max": DQN_HP["m_max"],
             "dqn_hyperparams": DQN_HP,
+            "rand_gmres_restarts": list(RAND_RESTARTS),
             "notes": [
                 "GMRES(20) is deterministic; only one run per RHS is recorded. "
-                "DQN's seed controls both the policy network init and exploration "
-                "draws, so DQN gets num_seeds independent runs per RHS.",
+                "DQN and randGMRES each get num_seeds independent runs per RHS, "
+                "with seeds matched cell-by-cell so each (matrix, RHS, seed) "
+                "triple is comparable across the two stochastic methods.",
+                "randGMRES draws m uniformly from rand_gmres_restarts at every "
+                "GMRES restart cycle.",
             ],
         },
         "results": results,
@@ -268,13 +323,16 @@ def main():
     if args.limit:
         paths = paths[:args.limit]
 
-    # GMRES(20) is deterministic (1 run/RHS); DQN gets num_seeds runs/RHS.
-    total_runs = len(paths) * args.num_rhs * (args.num_seeds + 1)
+    # GMRES(20) is deterministic (1 run/RHS); DQN and randGMRES each get
+    # num_seeds runs/RHS.
+    total_runs = len(paths) * args.num_rhs * (2 * args.num_seeds + 1)
     print(f"Loading {len(paths)} matrices from {matrices_dir}")
-    print(f"  RHS per matrix         : {args.num_rhs}")
-    print(f"  DQN seeds per RHS      : {args.num_seeds}")
-    print(f"  GMRES(20) runs per RHS : 1  (deterministic)")
-    print(f"  Total runs             : {total_runs}")
+    print(f"  RHS per matrix              : {args.num_rhs}")
+    print(f"  DQN seeds per RHS           : {args.num_seeds}")
+    print(f"  randGMRES seeds per RHS     : {args.num_seeds}")
+    print(f"  GMRES(20) runs per RHS      : 1  (deterministic)")
+    print(f"  randGMRES restart values    : {RAND_RESTARTS}")
+    print(f"  Total runs                  : {total_runs}")
 
     rhs_rng = np.random.default_rng(args.rhs_seed)
     results = []
@@ -312,8 +370,10 @@ def main():
             )
 
             seeds_dqn = []
+            seeds_rand = []
             for s in range(args.num_seeds):
                 seed = s + 10 * ri  # decoupled across (rhs, algorithm-seed)
+
                 dqn_run = run_dqn(A, b, seed=seed)
                 pbar.update(1)
                 seeds_dqn.append(dqn_run)
@@ -323,9 +383,19 @@ def main():
                     f"conv={int(dqn_run['converged'])}"
                 )
 
+                rand_run = run_random_gmres(A, b, seed=seed)
+                pbar.update(1)
+                seeds_rand.append(rand_run)
+                tqdm.write(
+                    f"    rhs {ri} seed {s}  randGMRES  arnoldi={rand_run['total_arnoldi']:>7d} "
+                    f"t={rand_run['elapsed_seconds']:6.1f}s "
+                    f"conv={int(rand_run['converged'])}"
+                )
+
             per_rhs.append({
                 "rhs_index": ri,
                 "dqn_seeds": seeds_dqn,
+                "rand_gmres_seeds": seeds_rand,
                 "gmres20_seeds": [gmres_run],  # 1-element list for schema uniformity
             })
 
@@ -353,10 +423,12 @@ def main():
 # Plotting
 # --------------------------------------------------------------------------- #
 
-def _aggregate(matrix_entry, key="total_arnoldi"):
-    dqn = [r[key] for rhs in matrix_entry["per_rhs"] for r in rhs["dqn_seeds"]]
-    gmres = [r[key] for rhs in matrix_entry["per_rhs"] for r in rhs["gmres20_seeds"]]
-    return np.asarray(dqn, dtype=np.float64), np.asarray(gmres, dtype=np.float64)
+def _aggregate(matrix_entry, alg_key, value_key="total_arnoldi"):
+    """Flatten the per-(rhs, seed) values for one algorithm into a 1D array."""
+    return np.asarray(
+        [r[value_key] for rhs in matrix_entry["per_rhs"] for r in rhs[alg_key]],
+        dtype=np.float64,
+    )
 
 
 def _all_converged(matrix_entry, alg_key) -> bool:
@@ -364,25 +436,30 @@ def _all_converged(matrix_entry, alg_key) -> bool:
 
 
 def make_plot(results, out_path: Path):
-    """Paper-ready: condition number vs mean total Arnoldi for DQN and GMRES(20)."""
+    """Paper-ready: condition number vs mean total Arnoldi for the three methods."""
     rows = sorted(results, key=lambda r: r["condition_number"])
 
     kappas = np.array([r["condition_number"] for r in rows])
-    dqn_mean, dqn_std, dqn_full_conv = [], [], []
-    gmres_mean, gmres_std, gmres_full_conv = [], [], []
-    for r in rows:
-        dqn_runs, gmres_runs = _aggregate(r, "total_arnoldi")
-        dqn_mean.append(dqn_runs.mean())
-        dqn_std.append(dqn_runs.std())
-        gmres_mean.append(gmres_runs.mean())
-        gmres_std.append(gmres_runs.std())
-        dqn_full_conv.append(_all_converged(r, "dqn_seeds"))
-        gmres_full_conv.append(_all_converged(r, "gmres20_seeds"))
 
-    dqn_mean = np.array(dqn_mean); dqn_std = np.array(dqn_std)
-    gmres_mean = np.array(gmres_mean); gmres_std = np.array(gmres_std)
-    dqn_full_conv = np.array(dqn_full_conv, dtype=bool)
-    gmres_full_conv = np.array(gmres_full_conv, dtype=bool)
+    # Per-method (mean, std, all-converged) per matrix.
+    methods = [
+        ("gmres20_seeds",   "GMRES(20)",     "#d62728", "s"),
+        ("rand_gmres_seeds", "randGMRES",    "#2ca02c", "^"),
+        ("dqn_seeds",       "DQN (ours)",    "#1f77b4", "o"),
+    ]
+    series = {}
+    for alg_key, _, _, _ in methods:
+        means, stds, fully = [], [], []
+        for r in rows:
+            arr = _aggregate(r, alg_key, "total_arnoldi")
+            means.append(arr.mean())
+            stds.append(arr.std())
+            fully.append(_all_converged(r, alg_key))
+        series[alg_key] = (
+            np.array(means),
+            np.array(stds),
+            np.array(fully, dtype=bool),
+        )
 
     plt.rcParams.update({
         "font.family": "serif",
@@ -396,48 +473,44 @@ def make_plot(results, out_path: Path):
     })
 
     fig, ax = plt.subplots(figsize=(6.5, 4.0))
-    DQN_C   = "#1f77b4"
-    GMRES_C = "#d62728"
 
-    # GMRES(20): plotted first so DQN sits on top.
-    ax.fill_between(kappas, gmres_mean - gmres_std, gmres_mean + gmres_std,
-                    color=GMRES_C, alpha=0.18, linewidth=0)
-    ax.plot(kappas, gmres_mean, linestyle="-", linewidth=1.8, color=GMRES_C,
-            label="GMRES(20)", zorder=3)
-    # Markers: filled square for full convergence, hollow for partial.
-    ax.plot(kappas[gmres_full_conv], gmres_mean[gmres_full_conv],
-            linestyle="None", marker="s", markersize=6, color=GMRES_C, zorder=4)
-    ax.plot(kappas[~gmres_full_conv], gmres_mean[~gmres_full_conv],
-            linestyle="None", marker="s", markersize=6,
-            markerfacecolor="white", markeredgecolor=GMRES_C, markeredgewidth=1.5,
-            zorder=4)
-
-    ax.fill_between(kappas, dqn_mean - dqn_std, dqn_mean + dqn_std,
-                    color=DQN_C, alpha=0.18, linewidth=0)
-    ax.plot(kappas, dqn_mean, linestyle="-", linewidth=1.8, color=DQN_C,
-            label="DQN (ours)", zorder=5)
-    ax.plot(kappas[dqn_full_conv], dqn_mean[dqn_full_conv],
-            linestyle="None", marker="o", markersize=6, color=DQN_C, zorder=6)
-    ax.plot(kappas[~dqn_full_conv], dqn_mean[~dqn_full_conv],
-            linestyle="None", marker="o", markersize=6,
-            markerfacecolor="white", markeredgecolor=DQN_C, markeredgewidth=1.5,
-            zorder=6)
+    # Plot in order: GMRES(20) (worst, drawn first), randGMRES (middle),
+    # DQN (best, drawn on top). zorder is incremented across methods so the
+    # later lines overlay earlier ones at intersection points.
+    for z, (alg_key, label, color, marker) in enumerate(methods):
+        means, stds, fully = series[alg_key]
+        ax.fill_between(kappas, means - stds, means + stds,
+                        color=color, alpha=0.16, linewidth=0)
+        ax.plot(kappas, means, linestyle="-", linewidth=1.8, color=color,
+                label=label, zorder=3 + 2 * z)
+        # Markers: filled for full-convergence matrices, hollow otherwise.
+        ax.plot(kappas[fully], means[fully],
+                linestyle="None", marker=marker, markersize=6, color=color,
+                zorder=4 + 2 * z)
+        ax.plot(kappas[~fully], means[~fully],
+                linestyle="None", marker=marker, markersize=6,
+                markerfacecolor="white", markeredgecolor=color, markeredgewidth=1.5,
+                zorder=4 + 2 * z)
 
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel(r"Condition number $\kappa_2(A)$")
     ax.set_ylabel("Total Arnoldi iterations to convergence")
+    ax.set_title(
+        r"Total Arnoldi iterations vs. $\kappa_2(A)$ "
+        r"on convection-diffusion matrices",
+        pad=14,
+    )
     ax.grid(True, which="major", linestyle="-", linewidth=0.5, alpha=0.5)
     ax.grid(True, which="minor", linestyle=":", linewidth=0.4, alpha=0.4)
 
-    # Legend with a small "hollow = partial convergence" annotation.
     leg = ax.legend(loc="upper left", frameon=True, framealpha=0.95)
     leg.get_frame().set_linewidth(0.6)
     ax.text(
         0.99, 0.02,
         "Hollow markers: not all runs reached tolerance.\n"
-        "Shaded band: $\\pm 1$ std (DQN: 5 RHS $\\times$ 2 seeds = 10 runs;\n"
-        "GMRES(20): 5 RHS, deterministic).",
+        "Shaded band: $\\pm 1$ std (DQN, randGMRES: 5 RHS $\\times$ 2 seeds = 10\n"
+        "runs; GMRES(20): 5 RHS, deterministic).",
         ha="right", va="bottom", transform=ax.transAxes,
         fontsize=8.5, color="0.25",
         bbox=dict(boxstyle="round,pad=0.3", facecolor="white",

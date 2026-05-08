@@ -1,0 +1,19 @@
+id,description,value,interpretation
+method_a,First method label,gmres_rl,
+method_b,Second method label,rand_gmres,
+n_paired_cells,"Number of (matrix, seed) cells with runs from both methods",775,Test sample size: 775 matched cells.
+n_AA_both_converged,Cells where both methods converged,696,696 cells: both methods reached tolerance.
+n_AB_only_method_a_converged,Cells where gmres_rl converged but rand_gmres did not,19,19 discordant cells favor gmres_rl.
+n_BA_only_method_b_converged,Cells where rand_gmres converged but gmres_rl did not,0,0 discordant cells favor rand_gmres.
+n_neither_converged,Cells where neither method converged,60,60 cells: both methods hit the cap.
+convergence_rate_gmres_rl,Marginal convergence rate of gmres_rl,0.9225806451612903,gmres_rl converges on 92.26% of cells.
+convergence_rate_rand_gmres,Marginal convergence rate of rand_gmres,0.8980645161290323,rand_gmres converges on 89.81% of cells.
+convergence_rate_difference_a_minus_b,"Marginal rate difference, method A minus method B",0.024516129032258083,gmres_rl converges on +2.45 percentage points more cells than rand_gmres.
+ci95_diff_low,Newcombe (1998) hybrid Wilson 95% CI lower bound on the rate difference,0.01372549135873971,95% lower CI on the difference: +0.0137.
+ci95_diff_high,Newcombe (1998) hybrid Wilson 95% CI upper bound on the rate difference,0.03684632214102336,95% upper CI on the difference: +0.0368.
+n_discordant,Total discordant cells (n_AB + n_BA); the only cells contributing to the McNemar statistic,19,"19 discordant cells; under H0 these split as Binomial(19, 0.5)."
+discordant_ratio_a_over_b,Ratio n_AB / n_BA: multiplicative advantage of method A on discordant pairs,inf,gmres_rl wins all discordant cells (ratio = infinity).
+mcnemar_chi_squared_continuity_corrected,Edwards' continuity-corrected McNemar chi-squared statistic on discordant cells,17.05263157894737,chi^2 = 17.0526.
+mcnemar_p_value_asymptotic,Two-sided p-value from the chi-squared (1 df) distribution,3.6357955202995386e-05,asymptotic p = 3.6358e-05.
+mcnemar_p_value_exact,Exact two-sided binomial p-value on the n_AB vs n_BA split (preferred for any sample size),3.814697265625e-06,exact p = 3.8147e-06.
+summary,One-line natural-language summary of the test,,"gmres_rl converged on 92.26% of cells vs rand_gmres's 89.81%. Of 19 discordant cells, 19 favor gmres_rl and 0 favor rand_gmres. Exact two-sided McNemar p = 3.815e-06."

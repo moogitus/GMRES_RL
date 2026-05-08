@@ -13,16 +13,35 @@ incurs $\mathcal{O}(n)$ per replay-buffer transition.
 
 ## Quick install
 
+This repo uses [Git LFS](https://git-lfs.com/) for the ~2.6 GB of data files
+(SuiteSparse `.tar.gz` matrix archives and the 825 MB `results/peairs_155/full_run.json`).
+Install `git-lfs` *before* cloning, otherwise you will only get small pointer
+stubs in place of the matrices and the raw benchmark JSON.
+
 ```bash
+# install git-lfs once on your machine
+brew install git-lfs    # macOS; Linux: see https://git-lfs.com/
+git lfs install
+
 git clone https://github.com/moogitus/GMRES_RL.git
 cd GMRES_RL
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+If you already cloned without LFS, run `git lfs pull` from inside the repo to
+download the actual files.
+
 The matrices in `matrices/` are SuiteSparse `.tar.gz` archives (or `.mtx` files
 for the synthetic convection-diffusion suite). Convection-diffusion matrices can
 be regenerated locally with `python src/make_convdiff_matrices.py`.
+
+### What lives in Git LFS
+
+- `matrices/full_benchmark/*.tar.gz` (155-matrix Peairs suite)
+- `matrices/hpo_matrices/*.tar.gz` (16-matrix HPO suite)
+- `matrices/slrl_benchmark_matrices/*.tar.gz` (6-matrix AK-SLRL suite)
+- `results/peairs_155/full_run.json` (raw per-cell data, ~825 MB)
 
 ## Repository structure
 

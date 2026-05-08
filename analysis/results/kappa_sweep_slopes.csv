@@ -1,0 +1,4 @@
+id,method,label,slope,intercept,ci95_low,ci95_high,n_matrices,formula,interpretation
+slope_arnoldi_vs_kappa_gmres20,gmres20,GMRES(20),0.9240,-0.6302,0.7820,1.0595,20,"numpy.polyfit(log10(condition_number), log10(mean_total_arnoldi), 1)","GMRES(20) mean Arnoldi grows as kappa^0.92 (95% CI [0.78, 1.06])."
+slope_arnoldi_vs_kappa_rand_gmres,rand_gmres,randGMRES,0.7281,-0.1816,0.6923,0.7717,20,"numpy.polyfit(log10(condition_number), log10(mean_total_arnoldi), 1)","randGMRES mean Arnoldi grows as kappa^0.73 (95% CI [0.69, 0.77])."
+slope_arnoldi_vs_kappa_gmres_rl,gmres_rl,DQN,0.4623,1.1299,0.4315,0.4844,20,"numpy.polyfit(log10(condition_number), log10(mean_total_arnoldi), 1)","DQN mean Arnoldi grows as kappa^0.46 (95% CI [0.43, 0.48])."

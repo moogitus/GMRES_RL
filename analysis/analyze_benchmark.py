@@ -1,7 +1,5 @@
 """
-Analyze the Peairs-style 159-matrix benchmark with rliable.
-
-Expected input: JSON emitted by analysis/run_peairs_style_159_suite.py
+Analyze benchmark JSON emitted by analysis/benchmark.py with rliable.
 """
 
 from __future__ import annotations
@@ -52,24 +50,32 @@ def parse_args():
     parser.add_argument(
         "--input",
         type=str,
-        default="src/logs/peairs_style_159_suite.json",
+        default="logs/peairs_style_159_suite.json",
     )
     parser.add_argument(
         "--baseline",
         type=str,
         default="gmres20",
-        choices=["gmres20", "gmres60"],
+    )
+    parser.add_argument(
+        "--poi-references",
+        nargs="*",
+        default=None,
+        help=(
+            "Methods to use as references for probability-of-improvement summaries. "
+            "Defaults to gmres_rl_m20 / gmres_rl_m60 when present, otherwise gmres_rl."
+        ),
     )
     parser.add_argument("--reps", type=int, default=5000)
     parser.add_argument(
         "--out-json",
         type=str,
-        default="src/logs/peairs_style_159_rliable_summary.json",
+        default="logs/peairs_style_159_rliable_summary.json",
     )
     parser.add_argument(
         "--out-dir",
         type=str,
-        default="src/logs/peairs_style_159_rliable",
+        default="logs/peairs_style_159_rliable",
     )
     return parser.parse_args()
 
@@ -94,6 +100,10 @@ def build_metric_matrices(payload: dict, baseline: str):
     results = payload["results"]
     matrix_names = list(results.keys())
     methods = payload["meta"]["methods"]
+    if baseline not in methods:
+        raise ValueError(
+            f"Baseline '{baseline}' not found in benchmark methods: {methods}"
+        )
     num_runs = max(_method_run_count(payload, method) for method in methods)
 
     arnoldi_scores = {method: np.zeros((num_runs, len(matrix_names))) for method in methods}
@@ -235,12 +245,35 @@ def main():
     wallclock_summary = interval_summary(wallclock_scores, reps=args.reps)
     success_summary = interval_summary(success_scores, reps=args.reps)
 
-    dqn_arnoldi_poi = probability_of_improvement_summary(
-        arnoldi_scores, reference="gmres_rl", reps=args.reps
-    )
-    dqn_wallclock_poi = probability_of_improvement_summary(
-        wallclock_scores, reference="gmres_rl", reps=args.reps
-    )
+    if args.poi_references:
+        poi_references = args.poi_references
+    else:
+        poi_references = [
+            method
+            for method in ("gmres_rl_m20", "gmres_rl_m60", "gmres_rl")
+            if method in methods
+        ]
+
+    missing_references = [reference for reference in poi_references if reference not in methods]
+    if missing_references:
+        raise ValueError(
+            "Probability-of-improvement reference methods not found in benchmark "
+            f"methods: {missing_references}"
+        )
+
+    poi_summary = {}
+    for reference in poi_references:
+        poi_summary[reference] = {
+            "arnoldi": probability_of_improvement_summary(
+                arnoldi_scores, reference=reference, reps=args.reps
+            ),
+            "wallclock": probability_of_improvement_summary(
+                wallclock_scores, reference=reference, reps=args.reps
+            ),
+            "success": probability_of_improvement_summary(
+                success_scores, reference=reference, reps=args.reps
+            ),
+        }
 
     out_dir = Path(args.out_dir)
     save_performance_profile(
@@ -282,10 +315,7 @@ def main():
         "arnoldi_speedup": arnoldi_summary,
         "wallclock_speedup": wallclock_summary,
         "success_rate": success_summary,
-        "probability_of_improvement_vs_dqn": {
-            "arnoldi": dqn_arnoldi_poi,
-            "wallclock": dqn_wallclock_poi,
-        },
+        "probability_of_improvement": poi_summary,
     }
 
     out_json = Path(args.out_json)

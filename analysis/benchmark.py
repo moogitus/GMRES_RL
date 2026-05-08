@@ -1,15 +1,13 @@
 """
-Run a Peairs-style benchmark over the 159-matrix test suite using:
+Run a comprehensive benchmark over the 103-matrix test suite using:
   - GMRES(20)
   - GMRES(60)
   - angleGMRES
   - randGMRES
-  - the repo's DQN-controlled GMRES (history length 5, m_max 20 by default)
+  - DQN-controlled GMRES_RL (history length 5, m_max 20 by default)
 
 All methods use the consistent RHS b = A @ 1 and a common total-Arnoldi budget.
 """
-
-from __future__ import annotations
 
 import argparse
 import concurrent.futures
@@ -70,7 +68,7 @@ class BudgetedGMRESEnv(GMRESEnv):
         prev_norm = self.current_residual_norm
         prev_rel = self._relative_residual(prev_norm)
 
-        if prev_rel < self.tolerance:
+        if self._is_converged(prev_norm, prev_rel):
             obs = self._build_observation()
             return obs, 0.0, True, False, {
                 "current_m": m,
@@ -80,22 +78,24 @@ class BudgetedGMRESEnv(GMRESEnv):
                 "total_arnoldi": self.total_arnoldi,
             }
 
-        self.x, self.current_residual_vector = self._execute_gmres_cycle(
+        self.x, self.current_residual_vector, actual_m = self._execute_gmres_cycle(
             self.x, self.current_residual_vector, m
         )
         self.current_residual_norm = float(np.linalg.norm(self.current_residual_vector))
         self.cycle_count += 1
-        self.total_arnoldi += m
+        self.total_arnoldi += actual_m
 
         curr_rel = self._relative_residual(self.current_residual_norm)
-        reward = self._compute_reward(prev_rel, curr_rel, m)
+        reward = self._compute_reward(
+            prev_norm, prev_rel, self.current_residual_norm, curr_rel, m
+        )
 
         self.restart_history = np.roll(self.restart_history, -1)
         self.restart_history[-1] = np.float32(m / self.m_max)
         self.residual_history = np.roll(self.residual_history, -1)
         self.residual_history[-1] = np.float32(np.log(max(curr_rel, 1e-12)))
 
-        terminated = bool(curr_rel < self.tolerance)
+        terminated = bool(self._is_converged(self.current_residual_norm, curr_rel))
         truncated = bool(self.cycle_count >= self.max_cycles) and not terminated
         if (
             self.max_total_arnoldi is not None
@@ -107,6 +107,7 @@ class BudgetedGMRESEnv(GMRESEnv):
         obs = self._build_observation()
         info = {
             "current_m": m,
+            "actual_arnoldi": int(actual_m),
             "residual_norm": self.current_residual_norm,
             "prev_residual_norm": prev_norm,
             "relative_residual_norm": curr_rel,
@@ -122,15 +123,19 @@ class _TraceOnDone(BaseCallback):
         super().__init__()
         self._done = False
         self._t0 = None
+        self.done_index: int | None = None
         self.residual_norms: list[float] = []
         self.relative_residuals: list[float] = []
         self.ms: list[int] = []
+        self.actual_arnoldi: list[int] = []
         self.step_times: list[float] = []
 
     def start_timer(self):
         self._t0 = time.perf_counter()
 
     def _on_step(self):
+        if self._done:
+            return False
         if self._t0 is None:
             self.start_timer()
         now = time.perf_counter() - self._t0
@@ -143,21 +148,26 @@ class _TraceOnDone(BaseCallback):
                 float(info.get("relative_residual_norm", np.nan))
             )
             self.ms.append(int(info.get("current_m", 0)))
+            self.actual_arnoldi.append(int(info.get("actual_arnoldi", 0)))
             self.step_times.append(float(now))
             if done:
+                self.done_index = len(self.ms)
                 self._done = True
+                break
         return not self._done
 
 
 def _trace_payload(initial_residual_norm: float, initial_relative_residual: float, logger: _TraceOnDone) -> dict:
-    ms = np.asarray(logger.ms, dtype=np.int64)
-    arnoldi = np.concatenate([[0], np.cumsum(ms, dtype=np.int64)])
-    wallclock = np.concatenate([[0.0], np.asarray(logger.step_times, dtype=np.float64)])
+    end = logger.done_index if logger.done_index is not None else len(logger.ms)
+    ms = np.asarray(logger.ms[:end], dtype=np.int64)
+    actual_arnoldi = np.asarray(logger.actual_arnoldi[:end], dtype=np.int64)
+    arnoldi = np.concatenate([[0], np.cumsum(actual_arnoldi, dtype=np.int64)])
+    wallclock = np.concatenate([[0.0], np.asarray(logger.step_times[:end], dtype=np.float64)])
     residual_norm = np.concatenate(
-        [[initial_residual_norm], np.asarray(logger.residual_norms, dtype=np.float64)]
+        [[initial_residual_norm], np.asarray(logger.residual_norms[:end], dtype=np.float64)]
     )
     relative_residual = np.concatenate(
-        [[initial_relative_residual], np.asarray(logger.relative_residuals, dtype=np.float64)]
+        [[initial_relative_residual], np.asarray(logger.relative_residuals[:end], dtype=np.float64)]
     )
     return {
         "arnoldi_steps": arnoldi.astype(np.int64).tolist(),
@@ -165,6 +175,7 @@ def _trace_payload(initial_residual_norm: float, initial_relative_residual: floa
         "residual_norm": residual_norm.astype(np.float64).tolist(),
         "relative_residual_norm": relative_residual.astype(np.float64).tolist(),
         "restart_values": ms.astype(np.int64).tolist(),
+        "actual_arnoldi": actual_arnoldi.astype(np.int64).tolist(),
     }
 
 
@@ -190,7 +201,7 @@ def _run_policy_trace(env: BudgetedGMRESEnv, action_fn) -> dict:
             break
 
     return {
-        "converged": bool(relative_residual[-1] < env.tolerance),
+        "converged": bool(env._is_converged(residual_norm[-1], relative_residual[-1])),
         "cycles_to_tol": int(info["cycle_count"]),
         "total_arnoldi": int(arnoldi[-1]),
         "elapsed_seconds": float(wallclock[-1]),
@@ -206,7 +217,14 @@ def _run_policy_trace(env: BudgetedGMRESEnv, action_fn) -> dict:
     }
 
 
-def run_fixed_gmres(A, b, restart: int, tolerance: float, max_total_arnoldi: int) -> dict:
+def run_fixed_gmres(
+    A,
+    b,
+    restart: int,
+    tolerance: float,
+    absolute_tolerance: float,
+    max_total_arnoldi: int,
+) -> dict:
     max_cycles = int(math.ceil(max_total_arnoldi / restart))
     env = BudgetedGMRESEnv(
         A=csr_matrix(A),
@@ -214,6 +232,7 @@ def run_fixed_gmres(A, b, restart: int, tolerance: float, max_total_arnoldi: int
         action_values=[restart],
         m_max=restart,
         tolerance=tolerance,
+        absolute_tolerance=absolute_tolerance,
         max_cycles=max_cycles,
         max_total_arnoldi=max_total_arnoldi,
         history_length=1,
@@ -229,6 +248,7 @@ def run_rand_gmres(
     b,
     restart_values: list[int],
     tolerance: float,
+    absolute_tolerance: float,
     max_total_arnoldi: int,
     seed: int,
 ) -> dict:
@@ -240,6 +260,7 @@ def run_rand_gmres(
         action_values=restart_values,
         m_max=max(restart_values),
         tolerance=tolerance,
+        absolute_tolerance=absolute_tolerance,
         max_cycles=max_cycles,
         max_total_arnoldi=max_total_arnoldi,
         history_length=1,
@@ -253,19 +274,39 @@ def run_rand_gmres(
 def run_angle_gmres(
     A,
     b,
-    restart_values: list[int],
+    m_max: int,
+    m_min: int,
+    decrement: int,
     tolerance: float,
+    absolute_tolerance: float,
     max_total_arnoldi: int,
-    residual_ratio_threshold: float,
+    beta_small: float,
+    beta_large: float,
 ) -> dict:
-    ordered = [int(v) for v in restart_values]
-    max_cycles = int(math.ceil(max_total_arnoldi / min(ordered)))
+    m_max = int(m_max)
+    m_min = int(m_min)
+    decrement = int(decrement)
+    if decrement <= 0:
+        raise ValueError("angleGMRES decrement must be positive")
+    if m_min < 1:
+        raise ValueError("angleGMRES m_min must be at least 1")
+    if m_max <= m_min:
+        raise ValueError("angleGMRES requires m_max > m_min")
+
+    ordered = [m_max]
+    current = m_max
+    while current > m_min:
+        current = max(m_min, current - decrement)
+        ordered.append(current)
+
+    max_cycles = int(math.ceil(max_total_arnoldi / m_min))
     env = BudgetedGMRESEnv(
         A=csr_matrix(A),
         b=b,
         action_values=ordered,
-        m_max=max(ordered),
+        m_max=m_max,
         tolerance=tolerance,
+        absolute_tolerance=absolute_tolerance,
         max_cycles=max_cycles,
         max_total_arnoldi=max_total_arnoldi,
         history_length=1,
@@ -281,10 +322,22 @@ def run_angle_gmres(
             prev_rel = max(float(info["prev_relative_residual_norm"]), 1e-16)
             curr_rel = float(info["relative_residual_norm"])
             ratio = curr_rel / prev_rel
-            if ratio > residual_ratio_threshold and state["idx"] < len(ordered) - 1:
-                state["idx"] += 1
-            elif ratio <= residual_ratio_threshold and state["idx"] > 0:
-                state["idx"] -= 1
+            current_m = ordered[state["idx"]]
+
+            # Paper's alpha-GMRES rule:
+            # - if convergence is very good, keep the same restart
+            # - if convergence is poor, reset to m_max
+            # - otherwise decrement by d until m_min, then reset to m_max
+            if ratio < beta_small:
+                next_m = current_m
+            elif ratio > beta_large:
+                next_m = m_max
+            elif current_m > m_min:
+                next_m = max(m_min, current_m - decrement)
+            else:
+                next_m = m_max
+
+            state["idx"] = ordered.index(next_m)
         return action
 
     return _run_policy_trace(env, policy)
@@ -297,6 +350,7 @@ def run_dqn_gmres(
     m_max: int,
     history_length: int,
     tolerance: float,
+    absolute_tolerance: float,
     max_total_arnoldi: int,
     gamma: float,
     lambda_work: float,
@@ -320,6 +374,7 @@ def run_dqn_gmres(
         b=b,
         m_max=m_max,
         tolerance=tolerance,
+        absolute_tolerance=absolute_tolerance,
         max_cycles=max_cycles,
         max_total_arnoldi=max_total_arnoldi,
         history_length=history_length,
@@ -358,13 +413,14 @@ def run_dqn_gmres(
         initial_relative_residual=float(reset_info["relative_residual_norm"]),
         logger=logger,
     )
+    final_residual = float(trace["residual_norm"][-1])
     final_rel = float(trace["relative_residual_norm"][-1])
     return {
-        "converged": bool(final_rel < tolerance),
+        "converged": bool(env._is_converged(final_residual, final_rel)),
         "cycles_to_tol": max(0, len(trace["arnoldi_steps"]) - 1),
         "total_arnoldi": int(trace["arnoldi_steps"][-1]),
         "elapsed_seconds": float(trace["wallclock_seconds"][-1]),
-        "final_residual_norm": float(trace["residual_norm"][-1]),
+        "final_residual_norm": final_residual,
         "final_relative_residual_norm": final_rel,
         "trace": trace,
     }
@@ -384,6 +440,13 @@ def summarise_runs(runs: list[dict]) -> dict:
 
 
 def _method_specs(args: argparse.Namespace) -> dict[str, dict]:
+    def restart_label(prefix: str, values: list[int]) -> str:
+        values_text = ",".join(str(value) for value in values)
+        return f"{prefix}({values_text})"
+
+    def angle_label(m_max: int, decrement: int, m_min: int) -> str:
+        return f"angleGMRES(max={m_max},d={decrement},min={m_min})"
+
     return {
         "gmres20": {
             "label": "GMRES(20)",
@@ -398,13 +461,13 @@ def _method_specs(args: argparse.Namespace) -> dict[str, dict]:
             "seeds": False,
         },
         "rand_gmres_10_20": {
-            "label": "randGMRES(10,20)",
+            "label": restart_label("randGMRES", list(args.rand_restarts_short)),
             "type": "rand",
             "restart_values": list(args.rand_restarts_short),
             "seeds": True,
         },
         "rand_gmres_10_20_30_40_50_60": {
-            "label": "randGMRES(10,20,30,40,50,60)",
+            "label": restart_label("randGMRES", list(args.rand_restarts_wide)),
             "type": "rand",
             "restart_values": list(args.rand_restarts_wide),
             "seeds": True,
@@ -422,15 +485,27 @@ def _method_specs(args: argparse.Namespace) -> dict[str, dict]:
             "seeds": True,
         },
         "angle_gmres_10_20": {
-            "label": "angleGMRES(10,20)",
+            "label": angle_label(
+                args.angle_short_max,
+                args.angle_short_decrement,
+                args.angle_short_min,
+            ),
             "type": "angle",
-            "restart_values": list(args.angle_restarts_short),
+            "m_max": args.angle_short_max,
+            "m_min": args.angle_short_min,
+            "decrement": args.angle_short_decrement,
             "seeds": False,
         },
         "angle_gmres_10_20_30_40_50_60": {
-            "label": "angleGMRES(10,20,30,40,50,60)",
+            "label": angle_label(
+                args.angle_wide_max,
+                args.angle_wide_decrement,
+                args.angle_wide_min,
+            ),
             "type": "angle",
-            "restart_values": list(args.angle_restarts_wide),
+            "m_max": args.angle_wide_max,
+            "m_min": args.angle_wide_min,
+            "decrement": args.angle_wide_decrement,
             "seeds": False,
         },
     }
@@ -458,11 +533,17 @@ def _build_payload(
             "method_params": {
                 "gmres20_restart": args.gmres20_restart,
                 "gmres60_restart": args.gmres60_restart,
+                "absolute_tolerance": args.absolute_tolerance,
                 "rand_restarts_short": list(args.rand_restarts_short),
                 "rand_restarts_wide": list(args.rand_restarts_wide),
-                "angle_restarts_short": list(args.angle_restarts_short),
-                "angle_restarts_wide": list(args.angle_restarts_wide),
-                "angle_threshold": args.angle_threshold,
+                "angle_short_max": args.angle_short_max,
+                "angle_short_min": args.angle_short_min,
+                "angle_short_decrement": args.angle_short_decrement,
+                "angle_wide_max": args.angle_wide_max,
+                "angle_wide_min": args.angle_wide_min,
+                "angle_wide_decrement": args.angle_wide_decrement,
+                "angle_beta_small": args.angle_beta_small,
+                "angle_beta_large": args.angle_beta_large,
                 "dqn_history_length": args.dqn_history_length,
                 "dqn_gamma": args.dqn_gamma,
                 "dqn_lambda_work": args.dqn_lambda_work,
@@ -472,7 +553,7 @@ def _build_payload(
                 "All methods use the consistent RHS b = A @ 1.",
                 "A common total-Arnoldi budget is enforced across methods.",
                 "GMRES_RL uses the repo's DQN with history-length state and the configured m_max values.",
-                "angleGMRES is a residual-ratio heuristic over the configured ordered restart lists.",
+                "angleGMRES implements the alpha-GMRES residual-ratio rule from Baker, Jessup, and Kolev (2009): keep m on very good progress, reset to m_max on poor progress, otherwise decrement by d until m_min before cycling back to m_max.",
                 "randGMRES samples uniformly from the configured restart lists at each restart cycle.",
                 "A partial checkpoint JSON is written after each completed matrix.",
             ],
@@ -523,6 +604,7 @@ def _run_single_matrix(name: str, matrices_dir: str, args_dict: dict) -> tuple[s
                     b,
                     spec["restart"],
                     args.tolerance,
+                    args.absolute_tolerance,
                     args.max_total_arnoldi,
                 )
             )
@@ -531,10 +613,14 @@ def _run_single_matrix(name: str, matrices_dir: str, args_dict: dict) -> tuple[s
                 run_angle_gmres(
                     A,
                     b,
-                    restart_values=spec["restart_values"],
+                    m_max=spec["m_max"],
+                    m_min=spec["m_min"],
+                    decrement=spec["decrement"],
                     tolerance=args.tolerance,
+                    absolute_tolerance=args.absolute_tolerance,
                     max_total_arnoldi=args.max_total_arnoldi,
-                    residual_ratio_threshold=args.angle_threshold,
+                    beta_small=args.angle_beta_small,
+                    beta_large=args.angle_beta_large,
                 )
             )
         elif spec["type"] == "rand":
@@ -546,6 +632,7 @@ def _run_single_matrix(name: str, matrices_dir: str, args_dict: dict) -> tuple[s
                         b,
                         restart_values=spec["restart_values"],
                         tolerance=args.tolerance,
+                        absolute_tolerance=args.absolute_tolerance,
                         max_total_arnoldi=args.max_total_arnoldi,
                         seed=seed,
                     )
@@ -560,6 +647,7 @@ def _run_single_matrix(name: str, matrices_dir: str, args_dict: dict) -> tuple[s
                         m_max=spec["m_max"],
                         history_length=args.dqn_history_length,
                         tolerance=args.tolerance,
+                        absolute_tolerance=args.absolute_tolerance,
                         max_total_arnoldi=args.max_total_arnoldi,
                         gamma=args.dqn_gamma,
                         lambda_work=args.dqn_lambda_work,
@@ -610,6 +698,7 @@ def parse_args():
     parser.add_argument("--matrix-names", nargs="+", default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--tolerance", type=float, default=1e-6)
+    parser.add_argument("--absolute-tolerance", type=float, default=1e-12)
     parser.add_argument("--max-total-arnoldi", type=int, default=100_000)
     parser.add_argument("--num-seeds", type=int, default=5)
     parser.add_argument("--base-seed", type=int, default=0)
@@ -636,14 +725,22 @@ def parse_args():
     parser.add_argument(
         "--rand-restarts-wide", nargs="+", type=int, default=[10, 20, 30, 40, 50, 60]
     )
-    parser.add_argument("--angle-restarts-short", nargs="+", type=int, default=[20, 10])
+    parser.add_argument("--angle-short-max", type=int, default=20)
+    parser.add_argument("--angle-short-min", type=int, default=3)
+    parser.add_argument("--angle-short-decrement", type=int, default=3)
+    parser.add_argument("--angle-wide-max", type=int, default=60)
+    parser.add_argument("--angle-wide-min", type=int, default=3)
+    parser.add_argument("--angle-wide-decrement", type=int, default=3)
     parser.add_argument(
-        "--angle-restarts-wide",
-        nargs="+",
-        type=int,
-        default=[60, 50, 40, 30, 20, 10],
+        "--angle-beta-small",
+        type=float,
+        default=float(math.cos(math.radians(80.0))),
     )
-    parser.add_argument("--angle-threshold", type=float, default=0.95)
+    parser.add_argument(
+        "--angle-beta-large",
+        type=float,
+        default=float(math.cos(math.radians(8.0))),
+    )
 
     parser.add_argument("--dqn-history-length", type=int, default=5)
     parser.add_argument("--dqn-gamma", type=float, default=0.925)
@@ -660,7 +757,7 @@ def parse_args():
     parser.add_argument(
         "--out",
         type=str,
-        default="src/logs/peairs_style_159_suite.json",
+        default="logs/peairs_style_159_suite.json",
     )
     return parser.parse_args()
 

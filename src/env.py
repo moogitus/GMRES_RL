@@ -28,6 +28,7 @@ class GMRESEnv(gym.Env):
         b,
         m_max=20,
         tolerance=1e-5,
+        absolute_tolerance=1e-12,
         max_cycles=200,
         history_length=5,
         lambda_work=0.0124,
@@ -52,6 +53,7 @@ class GMRESEnv(gym.Env):
         self.n = A.shape[0]
         self.m_max = m_max
         self.tolerance = float(tolerance)
+        self.absolute_tolerance = float(absolute_tolerance)
         self.max_cycles = int(max_cycles)
         self.history_length = history_length
 
@@ -129,7 +131,7 @@ class GMRESEnv(gym.Env):
 
         # Early-convergence guard: if we're already at tolerance, terminate cleanly.
         prev_rel = self._relative_residual(prev_norm)
-        if prev_rel < self.tolerance:
+        if self._is_converged(prev_norm, prev_rel):
             obs = self._build_observation()
             return obs, 0.0, True, False, {
                 "current_m": m,
@@ -140,16 +142,18 @@ class GMRESEnv(gym.Env):
             }
 
         # Run one GMRES(m) restart cycle.
-        self.x, self.current_residual_vector = self._execute_gmres_cycle(
+        self.x, self.current_residual_vector, actual_m = self._execute_gmres_cycle(
             self.x, self.current_residual_vector, m
         )
         self.current_residual_norm = float(np.linalg.norm(self.current_residual_vector))
         self.cycle_count += 1
-        self.total_arnoldi += m
+        self.total_arnoldi += actual_m
 
         # Reward
         curr_rel = self._relative_residual(self.current_residual_norm)
-        reward = self._compute_reward(prev_rel, curr_rel, m)
+        reward = self._compute_reward(
+            prev_norm, prev_rel, self.current_residual_norm, curr_rel, m
+        )
 
         # Update k-step history state.
         self.restart_history = np.roll(self.restart_history, -1)
@@ -158,12 +162,13 @@ class GMRESEnv(gym.Env):
         self.residual_history[-1] = np.float32(np.log(max(curr_rel, 1e-12)))
 
         # Termination / truncation
-        terminated = bool(curr_rel < self.tolerance)
+        terminated = bool(self._is_converged(self.current_residual_norm, curr_rel))
         truncated = bool(self.cycle_count >= self.max_cycles) and not terminated
 
         obs = self._build_observation()
         info = {
             "current_m": m,
+            "actual_arnoldi": int(actual_m),
             "residual_norm": self.current_residual_norm,
             "prev_residual_norm": prev_norm,
             "relative_residual_norm": curr_rel,
@@ -177,7 +182,7 @@ class GMRESEnv(gym.Env):
     # Reward
     # ------------------------------------------------------------------ #
 
-    def _compute_reward(self, prev_rel, curr_rel, m):
+    def _compute_reward(self, prev_norm, prev_rel, curr_norm, curr_rel, m):
         """
         Potential-based shaped reward (Ng, Harada, Russell 1999) with potential
 
@@ -201,12 +206,18 @@ class GMRESEnv(gym.Env):
         log_prev = np.log(max(prev_rel, tau) / tau)
         log_curr = np.log(max(curr_rel, tau) / tau)
         reward = -self.lambda_work * m + log_prev - self.gamma_shape * log_curr
-        if curr_rel < tau <= prev_rel:
+        if self._is_converged(curr_norm, curr_rel) and not self._is_converged(prev_norm, prev_rel):
             reward += self.convergence_bonus
         return reward
 
     def _relative_residual(self, residual_norm):
         return float(residual_norm) / self.b_norm
+
+    def _is_converged(self, residual_norm, relative_residual):
+        return bool(
+            float(relative_residual) < self.tolerance
+            or float(residual_norm) < self.absolute_tolerance
+        )
 
     # ------------------------------------------------------------------ #
     # Observation
@@ -226,7 +237,9 @@ class GMRESEnv(gym.Env):
     def _execute_gmres_cycle(self, x_current, r_current, m):
         """
         Run one restart cycle of GMRES(m) starting from x_current with residual
-        r_current = b - A x_current. Returns updated (x_next, r_next).
+        r_current = b - A x_current. Returns updated
+        `(x_next, r_next, actual_m)`, where `actual_m` is the number of Arnoldi
+        steps performed before either reaching `m` or breaking down early.
         """
         V, H, beta, actual_m, breakdown = self._arnoldi_iteration(
             self.A, r_current, m, tol=1e-14
@@ -235,7 +248,7 @@ class GMRESEnv(gym.Env):
         # If the initial residual was essentially zero, Arnoldi signals via
         # actual_m == 0. Nothing to do.
         if actual_m == 0:
-            return x_current, r_current
+            return x_current, r_current, 0
 
         # Solve min_y || beta * e_1 - H y ||_2.
         e1 = np.zeros(actual_m + 1)
@@ -247,7 +260,7 @@ class GMRESEnv(gym.Env):
 
         # Recompute residual explicitly for numerical accuracy.
         r_next = self.b - self.A @ x_next
-        return x_next, r_next
+        return x_next, r_next, actual_m
 
     @staticmethod
     def _arnoldi_iteration(A, r, m, tol=1e-14):

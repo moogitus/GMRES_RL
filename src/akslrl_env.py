@@ -23,6 +23,8 @@ class AKSLRLEnv(gym.Env):
 
     metadata = {"render_modes": ["console"]}
 
+    VALID_REWARD_TYPES = ("original", "shaped", "pbrs")
+
     def __init__(
         self,
         A,
@@ -33,15 +35,24 @@ class AKSLRLEnv(gym.Env):
         cte=1.0,
         convergence_bonus=0.0,
         include_log_residual_in_state=True,
+        reward_type="original",
+        lambda_work=0.0,
+        gamma_shape=0.97,
     ):
-        # A, b: linear system Ax = b
-        # m_max: max restart length (Krylov subspace dimension)
-        # tolerance: convergence threshold on ||r||  (NB: absolute, not relative)
-        # max_cycles: truncation cap on restart cycles per episode
-        # cte: constant c_te in the original reward (paper convention: 1.0)
+        # reward_type: "original" => Keramati & Hamdullahpur inverse-residual reward;
+        #              "shaped"   => -lambda_work * m + gamma_shape * Phi(r_k) - Phi(r_{k-1})
+        #                            with Phi(r) = -log(||r||)  (unbounded);
+        #              "pbrs"     => same shape as "shaped" but with the tau-clamped
+        #                            potential Phi_tau(r) = -log(max(||r||, tau) / tau).
+        # lambda_work, gamma_shape: only used by "shaped" / "pbrs".
         # convergence_bonus: sparse terminal bonus on first crossing tolerance
-        # include_log_residual_in_state: append log(||r||) to the obs vector
+        #                    (applies to all reward types).
         super().__init__()
+
+        if reward_type not in self.VALID_REWARD_TYPES:
+            raise ValueError(
+                f"reward_type must be one of {self.VALID_REWARD_TYPES}, got {reward_type!r}"
+            )
 
         self.A = A
         self.b = b
@@ -52,6 +63,9 @@ class AKSLRLEnv(gym.Env):
         self.cte = cte
         self.convergence_bonus = convergence_bonus
         self.include_log_residual_in_state = include_log_residual_in_state
+        self.reward_type = reward_type
+        self.lambda_work = float(lambda_work)
+        self.gamma_shape = float(gamma_shape)
 
         obs_dim = self.n + (1 if include_log_residual_in_state else 0)
 
@@ -105,7 +119,7 @@ class AKSLRLEnv(gym.Env):
         self.current_residual_norm = float(np.linalg.norm(self.current_residual_vector))
         self.cycle_count += 1
 
-        reward = self._compute_reward(prev_norm, self.current_residual_norm)
+        reward = self._compute_reward(prev_norm, self.current_residual_norm, m)
 
         terminated = bool(self.current_residual_norm < self.tolerance)
         truncated = bool(self.cycle_count >= self.max_cycles) and not terminated
@@ -120,10 +134,22 @@ class AKSLRLEnv(gym.Env):
         }
         return obs, float(reward), terminated, truncated, info
 
-    # AK-SLRL inverse-residual reward (Keramati & Hamdullahpur 2025)
-    def _compute_reward(self, prev_norm, curr_norm):
+    def _compute_reward(self, prev_norm, curr_norm, m):
         eps = 1e-12
-        reward = (self.cte / (curr_norm + eps)) + (prev_norm - curr_norm)
+        if self.reward_type == "original":
+            # Keramati & Hamdullahpur (2025) inverse-residual reward
+            reward = (self.cte / (curr_norm + eps)) + (prev_norm - curr_norm)
+        else:
+            # Work penalty plus potential-based shaping (Ng et al. 1999).
+            # "shaped" uses Phi(r) = -log(||r||); "pbrs" tau-clamps it.
+            if self.reward_type == "pbrs":
+                tau = self.tolerance
+                phi_prev = -np.log(max(prev_norm, tau) / tau)
+                phi_curr = -np.log(max(curr_norm, tau) / tau)
+            else:  # "shaped"
+                phi_prev = -np.log(max(prev_norm, eps))
+                phi_curr = -np.log(max(curr_norm, eps))
+            reward = -self.lambda_work * m + self.gamma_shape * phi_curr - phi_prev
         if curr_norm < self.tolerance <= prev_norm:
             reward += self.convergence_bonus
         return reward

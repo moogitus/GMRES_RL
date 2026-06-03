@@ -36,7 +36,7 @@ The matrices in `matrices/` are SuiteSparse `.tar.gz` archives (or `.mtx` files
 for the synthetic convection-diffusion suite). Convection-diffusion matrices can
 be regenerated locally with `python src/make_convdiff_matrices.py`.
 
-### What lives in Git LFS
+### Components of Git LFS
 
 - `matrices/full_benchmark/*.tar.gz` (155-matrix Peairs suite)
 - `matrices/hpo_matrices/*.tar.gz` (16-matrix HPO suite)
